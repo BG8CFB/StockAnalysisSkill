@@ -81,7 +81,7 @@ def update_task(task_id: str, **fields) -> TaskRecord:
 
 
 def list_tasks(
-    status: Optional[str] = None,
+    status: Optional[TaskStatus] = None,
     limit: int = 20,
     offset: int = 0,
 ) -> list[TaskRecord]:
@@ -95,7 +95,7 @@ def list_tasks(
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             record = TaskRecord.model_validate(data)
-            if status is None or record.status.value == status:
+            if status is None or record.status == status:
                 records.append(record)
         except Exception:
             continue

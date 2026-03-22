@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 from src.core.task_store import create_task, update_task, get_task, list_tasks
 from src.core.models import StageStatus, TaskStatus
@@ -56,7 +58,6 @@ def test_update_task_sets_completed_at_on_cancellation():
 
 
 def test_update_task_does_not_overwrite_completed_at():
-    from datetime import datetime
     task = create_task("000001.SZ")
     fixed_time = datetime(2026, 1, 1, 12, 0, 0)
     update_task(task.task_id, status=TaskStatus.COMPLETED, completed_at=fixed_time)
@@ -102,3 +103,8 @@ def test_list_tasks_filters_by_status():
     pending = list_tasks(status=TaskStatus.PENDING)
     assert len(pending) == 1
     assert pending[0].task_id == t1.task_id
+
+
+def test_update_task_raises_for_missing_task():
+    with pytest.raises(ValueError, match="not found"):
+        update_task("TASK_NONEXISTENT_XYZ", status=TaskStatus.RUNNING)
