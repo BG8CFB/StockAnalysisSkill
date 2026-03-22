@@ -5,6 +5,8 @@ import sys
 
 from loguru import logger
 
+_logging_configured = False
+
 
 class InterceptHandler(logging.Handler):
     """拦截标准 logging 并转发给 loguru，确保所有第三方库日志经过 loguru。"""
@@ -14,7 +16,7 @@ class InterceptHandler(logging.Handler):
             level = logger.level(record.levelname).name
         except ValueError:
             level = record.levelno
-        frame, depth = sys._getframe(6), 6
+        frame, depth = logging.currentframe(), 0
         while frame and frame.f_code.co_filename == logging.__file__:
             frame = frame.f_back
             depth += 1
@@ -25,6 +27,11 @@ class InterceptHandler(logging.Handler):
 
 def setup_logging() -> None:
     """初始化 loguru 日志系统。必须在 FastAPI 实例创建之前调用。"""
+    global _logging_configured
+    if _logging_configured:
+        return
+    _logging_configured = True
+
     from src.config import settings
 
     logger.remove()  # 移除 loguru 默认 handler

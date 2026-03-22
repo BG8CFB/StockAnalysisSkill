@@ -3,17 +3,21 @@ import pytest
 
 def test_setup_logging_does_not_raise(tmp_path, monkeypatch):
     from src import config
+    import src.logging_config
     monkeypatch.setattr(config.settings, "log_dir", tmp_path / "logs")
     monkeypatch.setattr(config.settings, "log_console_enabled", False)
+    monkeypatch.setattr(src.logging_config, "_logging_configured", False)
     from src.logging_config import setup_logging
     setup_logging()  # must not raise
 
 
 def test_log_dir_created(tmp_path, monkeypatch):
     from src import config
+    import src.logging_config
     log_dir = tmp_path / "logs"
     monkeypatch.setattr(config.settings, "log_dir", log_dir)
     monkeypatch.setattr(config.settings, "log_console_enabled", False)
+    monkeypatch.setattr(src.logging_config, "_logging_configured", False)
     from src.logging_config import setup_logging
     setup_logging()
     assert log_dir.exists()
@@ -21,9 +25,11 @@ def test_log_dir_created(tmp_path, monkeypatch):
 
 def test_setup_logging_adds_file_handler(tmp_path, monkeypatch):
     from src import config
+    import src.logging_config
     log_dir = tmp_path / "logs"
     monkeypatch.setattr(config.settings, "log_dir", log_dir)
     monkeypatch.setattr(config.settings, "log_console_enabled", False)
+    monkeypatch.setattr(src.logging_config, "_logging_configured", False)
     from loguru import logger
     from src.logging_config import setup_logging
     setup_logging()
