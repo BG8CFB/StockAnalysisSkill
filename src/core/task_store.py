@@ -101,3 +101,33 @@ def list_tasks(
             continue
 
     return records[offset : offset + limit]
+
+
+def append_task_log(task_id: str, message: str) -> None:
+    """向任务追加操作日志条目（时间戳前缀，read-modify-write）。"""
+    record = get_task(task_id)
+    if record is None:
+        return
+    entry = f"[{datetime.now().strftime('%H:%M:%S')}] {message}"
+    updated_logs = record.logs + [entry]
+    updated = record.model_copy(update={"logs": updated_logs})
+    _write_atomic(_task_file(task_id), updated.model_dump())
+
+
+def find_active_task(stock_code: str) -> Optional[TaskRecord]:
+    """查找 stock_code 的活跃任务（PENDING 或 RUNNING），用于幂等检查。"""
+    tasks_dir = settings.tasks_dir
+    if not tasks_dir.exists():
+        return None
+    for path in sorted(tasks_dir.glob("TASK_*.json"), reverse=True):
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            record = TaskRecord.model_validate(data)
+            if record.stock_code == stock_code and record.status in (
+                TaskStatus.PENDING, TaskStatus.RUNNING
+            ):
+                return record
+        except Exception:
+            continue
+    return None

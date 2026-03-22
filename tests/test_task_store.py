@@ -1,7 +1,7 @@
 from datetime import datetime
 
 import pytest
-from src.core.task_store import create_task, update_task, get_task, list_tasks
+from src.core.task_store import create_task, update_task, get_task, list_tasks, append_task_log, find_active_task
 from src.core.models import StageStatus, TaskStatus
 
 
@@ -108,3 +108,46 @@ def test_list_tasks_filters_by_status():
 def test_update_task_raises_for_missing_task():
     with pytest.raises(ValueError, match="not found"):
         update_task("TASK_NONEXISTENT_XYZ", status=TaskStatus.RUNNING)
+
+
+def test_append_task_log():
+    task = create_task("000001.SZ")
+    append_task_log(task.task_id, "Stage1 技术分析师 开始")
+    append_task_log(task.task_id, "Stage1 技术分析师 完成（1234字）")
+    result = get_task(task.task_id)
+    assert len(result.logs) == 2
+    assert "技术分析师 开始" in result.logs[0]
+    assert "技术分析师 完成" in result.logs[1]
+    assert result.logs[0].startswith("[")  # has timestamp prefix
+
+
+def test_append_task_log_nonexistent_task():
+    # should silently do nothing, not raise
+    append_task_log("TASK_NONEXISTENT_XYZ", "test message")
+
+
+def test_find_active_task_finds_pending():
+    task = create_task("000001.SZ")
+    found = find_active_task("000001.SZ")
+    assert found is not None
+    assert found.task_id == task.task_id
+
+
+def test_find_active_task_finds_running():
+    task = create_task("000001.SZ")
+    update_task(task.task_id, status=TaskStatus.RUNNING)
+    found = find_active_task("000001.SZ")
+    assert found is not None
+
+
+def test_find_active_task_returns_none_for_completed():
+    task = create_task("000001.SZ")
+    update_task(task.task_id, status=TaskStatus.COMPLETED)
+    found = find_active_task("000001.SZ")
+    assert found is None
+
+
+def test_find_active_task_returns_none_for_different_stock():
+    create_task("000001.SZ")
+    found = find_active_task("600000.SH")
+    assert found is None
