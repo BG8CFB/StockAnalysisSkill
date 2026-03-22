@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Runtime data (generated at runtime, not source)
+logs/
+reports/
+tasks/
+
+# Secrets
+.env
+
+# IDE
+.trae/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# uv
+.uv/
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
