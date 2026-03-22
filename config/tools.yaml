@@ -1,0 +1,220 @@
+# ============================================================
+# 内置数据工具说明文档
+# ============================================================
+# 每个工具对应 src/tools/data_tools.py 中的同名函数。
+# 工具由数据适配器（tushare_adapter / akshare_adapter）决定是否可用：
+#   - 若数据源支持该工具 → 注入真实数据（格式化 Markdown）
+#   - 若数据源不支持    → 注入 N/A 占位符
+# 将工具分配给智能体：在对应 config/agents/ YAML 的 tools 列表中添加工具名即可。
+# 任何工具均可分配给任何智能体，无硬性限制。
+# ============================================================
+
+price_tool:
+  display_name: 价格工具
+  description: >
+    提供个股历史 K 线序列（日线 OHLCV），含前复权价格。
+    是技术分析的核心原料，所有价格形态、趋势判断依赖此工具。
+  data_fields:
+    - 日线 OHLCV（开/高/低/收/量），最近 N 交易日
+    - 前复权收盘价序列
+    - 成交额（元）
+  typical_agents:
+    - technical_analyst
+  notes: >
+    仅提供历史序列，不提供技术指标计算结果（指标由 indicator_tool 提供）。
+
+indicator_tool:
+  display_name: 技术指标工具
+  description: >
+    提供已预计算好的常用技术指标。
+    数据由 src/data/calculator.py 在流水线启动时统一计算，智能体直接引用数值。
+  data_fields:
+    - MACD（DIF / DEA / 柱状值）
+    - RSI（6日 / 12日 / 24日）
+    - KDJ（K / D / J）
+    - 布林带（上轨 / 中轨 / 下轨）
+    - 均线（MA5 / MA10 / MA20 / MA60）
+    - 成交量均线（VOL_MA5 / VOL_MA20）
+  typical_agents:
+    - technical_analyst
+  notes: >
+    indicator_tool 依赖 price_tool 的数据计算得出，如 price_tool 不可用则此工具数据质量可能受影响。
+
+fundamental_tool:
+  display_name: 基本面工具
+  description: >
+    提供公司全套财务数据，用于估值分析、盈利质量判断、成长性评估。
+    数据优先来自 Tushare fina_indicator 接口（预算指标），不可用时自动降级为原始三表本地计算。
+  data_fields:
+    - 估值：PE（TTM）、PB（MRQ）、PS（TTM）、股息率、市值
+    - 盈利：ROE、ROA、毛利率、净利率
+    - 成长：营收同比增速、净利润同比增速
+    - 偿债：资产负债率、流动比率、速动比率
+    - 运营效率：总资产周转率、应收账款周转天数、存货周转天数
+    - 现金流：经营现金流含金量（OCF/净利润）、企业自由现金流（FCF）、EBITDA
+    - 资产负债表摘要：总资产、净资产（归母）、商誉、货币资金、短期借款
+    - 利润表明细：营收、净利润、营业成本、三费、营业利润（近2期）
+    - 现金流量表摘要：经营/投资/自由现金流、期末现金（近2期）
+    - 分红历史：近5次每股现金分红、送股比例
+    - 近60日PE/PB趋势
+  typical_agents:
+    - fundamental_analyst
+  notes: >
+    财务数据有季度滞后，最新数据通常为上季度末或上半年报。
+    智能体应在报告中注明数据时效。
+
+capital_flow_tool:
+  display_name: 资金流向工具
+  description: >
+    提供主力资金流入流出统计，揭示机构/大资金行为。
+    是判断主力意图（吸筹/出货/洗盘）的关键依据。
+  data_fields:
+    - 主力净流入（今日 / 5日累计 / 10日累计）
+    - 超大单净流入（单笔 ≥100万）
+    - 大单净流入（单笔 ≥20万）
+    - 中单净流入（单笔 ≥2万）
+    - 小单净流入（散户行为代理）
+    - 资金流向趋势（历史序列）
+  typical_agents:
+    - microstructure_analyst
+  notes: >
+    主力净流入 = 超大单净流入 + 大单净流入，可作为机构行为代理指标。
+
+margin_tool:
+  display_name: 融资融券工具
+  description: >
+    提供融资余额、融券余额历史序列，反映市场杠杆水平和情绪极端程度。
+  data_fields:
+    - 融资余额（历史序列，元）
+    - 融券余额（历史序列，元）
+    - 融资买入额（日度，元）
+    - 融资余额较 N 日前变化（趋势信号）
+  typical_agents:
+    - microstructure_analyst
+  notes: >
+    融资余额处于历史高位时通常是看多情绪过热的警示信号（逆向指标）。
+    此工具仅适用于 A 股两融标的，港股/美股返回 N/A。
+
+dragon_tiger_tool:
+  display_name: 龙虎榜工具
+  description: >
+    提供近期龙虎榜上榜记录，揭示机构建仓、游资炒作、大宗交易等行为。
+  data_fields:
+    - 近 N 次上榜记录（日期 / 原因 / 净买额 / 净卖额）
+    - 买方席位类型识别（机构 / 知名游资 / 普通营业部）
+    - 卖方席位类型识别
+  typical_agents:
+    - microstructure_analyst
+  notes: >
+    上榜原因包含：涨跌幅偏离 / 成交量异常 / 大宗交易。
+    机构席位连续买入通常是强烈看多信号。
+
+sentiment_tool:
+  display_name: 情绪工具
+  description: >
+    提供市场情绪类指标，衡量当前市场参与热度和情绪极端程度。
+  data_fields:
+    - 换手率（历史序列，%）
+    - 情绪指数（综合买卖盘情绪，0-100）
+    - 涨停次数 / 跌停次数统计（近 N 日）
+    - 个股热度排名（同类标的对比）
+  typical_agents:
+    - technical_analyst     # 量能分析
+    - sentiment_analyst     # 情绪综合分析
+    - microstructure_analyst  # 配合资金流分析
+  notes: >
+    换手率极高（>10%）通常伴随主力换手，需结合资金流方向判断多空。
+    换手率极低（<0.5%）通常表示价格僵局，突破方向待定。
+
+sector_tool:
+  display_name: 板块工具
+  description: >
+    提供个股所属行业/概念板块的表现数据，用于判断板块轮动方向和个股在板块内的相对强弱。
+  data_fields:
+    - 所属行业分类（一级 / 二级）
+    - 所属概念板块列表
+    - 板块近 5/10/20 日涨跌幅
+    - 板块内个股涨跌排名（个股相对强弱）
+    - 板块资金流向（净流入/流出）
+    - 板块热度（相对市场整体）
+  typical_agents:
+    - sector_analyst
+  notes: >
+    判断"板块轮动是否对个股有利"需结合板块当前所处阶段（启动/加速/衰竭）。
+
+news_tool:
+  display_name: 资讯工具
+  description: >
+    提供个股最新资讯，包含新闻、公告、研报，用于识别事件性驱动因素。
+  data_fields:
+    - 最新 N 条新闻（标题 / 摘要 / 发布时间 / 来源）
+    - 公司公告（重大事项 / 定期报告 / 股权变动等）
+    - 研报评级变动（机构名 / 评级 / 目标价）
+  typical_agents:
+    - news_analyst
+  notes: >
+    新闻数据时效性强，建议关注 3 个交易日内的资讯，超过 10 个交易日的资讯参考价值有限。
+    研报评级变动需关注机构名气，知名机构评级上调往往带来短期跟风效应。
+
+snapshot_tool:
+  display_name: 行情快照工具
+  description: >
+    提供当前（或最近收盘）行情快照，是交易计划制定和报告头部概览的基础数据。
+  data_fields:
+    - 最新价 / 涨跌幅 / 涨跌额
+    - 今日开盘价 / 最高价 / 最低价 / 收盘价
+    - 成交量 / 成交额
+    - 总市值 / 流通市值
+    - 52周最高价 / 最低价
+    - 市盈率（实时）
+  typical_agents:
+    - fundamental_analyst   # 辅助估值
+    - trading_planner       # 制定具体价格参数
+    - investment_advisor    # 报告头部行情概览
+  notes: >
+    交易计划师必须使用此工具，以便基于真实最新价位计算入场价/止损/止盈的绝对数值。
+
+shareholder_tool:
+  display_name: 股东结构工具
+  description: >
+    提供股东人数趋势（筹码集中度信号）、股权质押情况、近期回购记录。
+    股东人数连续减少通常是机构建仓、筹码集中的看多信号；
+    质押比例过高（>30%）存在强平风险，是重要风险指标。
+  data_fields:
+    - 股东人数趋势（最近 8 期，单位：户，含较上期变化%）
+    - 股权质押比例（%）、质押笔数、限售/非限售质押股数
+    - 质押比例历史趋势（近4期）
+    - 近期回购记录（公告日 / 状态 / 成交量 / 金额）
+  typical_agents:
+    - fundamental_analyst
+    - microstructure_analyst
+  notes: >
+    仅适用于 A 股（.SZ/.SH），港股/美股返回 N/A 占位符。
+    股东人数数据随季报披露，存在 1-2 个月滞后。
+
+risk_metric_tool:
+  display_name: 风险指标工具
+  description: >
+    提供由 src/tools/risk_calculator.py 纯代码计算的量化风险指标。
+    此工具的数据不来自外部 API，而是基于历史价格序列在流水线内计算，
+    因此只要 price_tool 有数据，此工具通常可用。
+  data_fields:
+    - VaR（95%置信度，1日/5日/20日持有期）
+    - VaR 金额（基于 analysis_capital_base 配置）
+    - 是否超过 10% 阈值警示
+    - 历史最大回撤（%）
+    - A股特有风险（仅 .SZ/.SH）:
+        - 涨跌停触发风险评分
+        - T+1 流动性风险评分
+        - 融资杠杆风险评分
+        - 停牌风险评分
+        - 综合风险评分（0-100）及建议
+  typical_agents:
+    - aggressive_risk_manager
+    - conservative_risk_manager
+    - quant_risk_manager
+    - chief_risk_officer
+  notes: >
+    risk_metric_tool 的入参特殊，由 tool_injector 通过 risk_results 参数传入，
+    而非直接读取 CalculatedDataPacket。
+    港股/美股不计算 A 股特有风险分，composite_score 和 recommendation 不可用。

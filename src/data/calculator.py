@@ -27,9 +27,13 @@ class CalculatedDataPacket:
     news_raw: Optional[list]
     financial_raw: Optional[dict]
     market_sentiment_raw: Optional[pd.DataFrame]
+    shareholder_raw: Optional[dict]       # 股东人数趋势 / 质押 / 回购（仅 A 股）
+    dividend_raw: Optional[list]          # 分红历史
     anomalies: list[dict]
     missing_fields: list[str]
     available_tools: set[str]
+    # 财务核心指标（来自 fina_indicator API 或本地 fallback 计算）
+    financial_indicators: dict = field(default_factory=dict)
     # 技术指标
     macd: dict = field(default_factory=dict)
     rsi: dict = field(default_factory=dict)
@@ -59,6 +63,8 @@ def calculate(packet: CleanedDataPacket) -> CalculatedDataPacket:
         news_raw=packet.news_raw,
         financial_raw=packet.financial_raw,
         market_sentiment_raw=packet.market_sentiment_raw,
+        shareholder_raw=packet.shareholder_raw,
+        dividend_raw=packet.dividend_raw or [],
         anomalies=packet.anomalies,
         missing_fields=list(packet.missing_fields),
         available_tools=set(packet.available_tools),
@@ -89,6 +95,13 @@ def calculate(packet: CleanedDataPacket) -> CalculatedDataPacket:
 
     if packet.capital_flow_raw is not None:
         calc.capital_flow = compute_capital_flow(packet.capital_flow_raw)
+
+    # 财务核心指标：优先用 fina_indicator API 数据，不可用时从原始三表本地计算
+    fi_records = (packet.financial_raw or {}).get("fina_indicator", [])
+    if fi_records:
+        calc.financial_indicators = compute_financial_indicators_from_api(fi_records)
+    elif packet.financial_raw:
+        calc.financial_indicators = compute_financial_indicators_local(packet.financial_raw)
 
     logger.info(f"[指标] 技术指标计算完成（MACD/RSI/KDJ/布林带/均线/VaR）")
     return calc
@@ -542,3 +555,123 @@ def compute_capital_flow(capital_flow_raw: pd.DataFrame) -> dict:
         "capital_score": score,
         "capital_signal": signal,
     }
+
+
+# ──────────────────────────────────────────────
+# 财务指标计算（fina_indicator API + 本地 fallback）
+# ──────────────────────────────────────────────
+
+def _safe_float(v) -> Optional[float]:
+    """安全类型转换，None / NaN / 空字符串均返回 None。"""
+    if v is None:
+        return None
+    try:
+        fv = float(v)
+        return None if pd.isna(fv) else fv
+    except (TypeError, ValueError):
+        return None
+
+
+def compute_financial_indicators_from_api(fina_indicator_records: list) -> dict:
+    """
+    从 fina_indicator API 数据提取最新期财务指标。
+    输入为 tushare_adapter 返回的 list[dict]，已按 end_date 降序排列。
+    """
+    if not fina_indicator_records:
+        return {}
+    latest = fina_indicator_records[0]
+    keys = [
+        "roe", "roa", "grossprofit_margin", "netprofit_margin",
+        "current_ratio", "quick_ratio", "debt_to_assets",
+        "tr_yoy", "netprofit_yoy", "or_yoy",
+        "assets_turn", "arturn_days", "invturn_days",
+        "ocf_to_profit", "ocf_to_debt",
+        "fcff", "fcfe", "bps", "ocfps", "ebitda",
+    ]
+    result = {}
+    for k in keys:
+        v = _safe_float(latest.get(k))
+        if v is not None:
+            result[k] = round(v, 4)
+    # 保留报告期信息
+    if latest.get("end_date"):
+        result["end_date"] = str(latest["end_date"])
+    return result
+
+
+def compute_financial_indicators_local(financial_raw: dict) -> dict:
+    """
+    本地 fallback：当 fina_indicator API 不可用时，从原始三表计算财务指标。
+    只计算能从现有字段直接推导的指标。
+
+    AkShare 预留：未来可在此函数入口处加一路 akshare_adapter 调用，
+    若成功则直接 return，使本地计算成为最后兜底。
+    """
+    result: dict = {}
+    income = financial_raw.get("income", [])
+    balancesheet = financial_raw.get("balancesheet", [])
+    cashflow = financial_raw.get("cashflow", [])
+
+    if not income:
+        return result
+
+    latest_inc = income[0]
+    latest_bs = balancesheet[0] if balancesheet else {}
+    latest_cf = cashflow[0] if cashflow else {}
+
+    rev = _safe_float(latest_inc.get("revenue"))
+    ni = _safe_float(latest_inc.get("n_income_attr_p")) or _safe_float(latest_inc.get("n_income"))
+    oper_cost = _safe_float(latest_inc.get("oper_cost"))
+    ocf = _safe_float(latest_cf.get("n_cashflow_act"))
+    total_assets = _safe_float(latest_bs.get("total_assets"))
+    total_liab = _safe_float(latest_bs.get("total_liab"))
+    equity = _safe_float(latest_bs.get("total_hldr_eqy_exc_min_int"))
+
+    # 毛利率
+    if rev and rev > 0 and oper_cost is not None:
+        result["grossprofit_margin"] = round((rev - oper_cost) / rev * 100, 2)
+
+    # 净利率
+    if rev and rev > 0 and ni is not None:
+        result["netprofit_margin"] = round(ni / rev * 100, 2)
+
+    # ROE（净资产收益率）
+    if equity and equity > 0 and ni is not None:
+        result["roe"] = round(ni / equity * 100, 2)
+
+    # 资产负债率
+    if total_assets and total_assets > 0 and total_liab is not None:
+        result["debt_to_assets"] = round(total_liab / total_assets * 100, 2)
+
+    # 营收同比增速（需要 2 期）
+    if len(income) >= 2:
+        rev0 = _safe_float(income[0].get("revenue"))
+        rev1 = _safe_float(income[1].get("revenue"))
+        if rev0 is not None and rev1 and rev1 != 0:
+            result["tr_yoy"] = round((rev0 - rev1) / rev1 * 100, 2)
+
+    # 净利润同比增速（需要 2 期）
+    if len(income) >= 2:
+        ni0 = _safe_float(income[0].get("n_income_attr_p")) or _safe_float(income[0].get("n_income"))
+        ni1 = _safe_float(income[1].get("n_income_attr_p")) or _safe_float(income[1].get("n_income"))
+        if ni0 is not None and ni1 and ni1 != 0:
+            result["netprofit_yoy"] = round((ni0 - ni1) / abs(ni1) * 100, 2)
+
+    # 现金流含金量（经营现金流 / 净利润）
+    if ocf is not None and ni and ni != 0:
+        result["ocf_to_profit"] = round(ocf / ni, 2)
+
+    # 自由现金流：优先取 API 字段，否则用经营现金流 - 资本支出
+    fcf = _safe_float(latest_cf.get("free_cashflow"))
+    if fcf is not None:
+        result["fcff"] = fcf
+    else:
+        capex = _safe_float(latest_cf.get("c_pay_acq_const_fiolta"))
+        if ocf is not None and capex is not None:
+            result["fcff"] = round(ocf - capex, 2)
+
+    # 报告期
+    if latest_inc.get("end_date"):
+        result["end_date"] = str(latest_inc["end_date"])
+
+    return result

@@ -6,32 +6,55 @@ import time
 from dataclasses import dataclass, field
 
 from src.agents.base_agent import BaseAgent
+from src.agents.config_loader import get_agent_config, get_stage1_agents
 from src.agents.llm_client import LLMClient
-from src.core.task_store import append_task_log
+from src.core.task_store import append_task_log, save_agent_output, save_data_evidence
 from src.data.calculator import CalculatedDataPacket
 from src.tools.tool_injector import inject_tools
 
 logger = logging.getLogger(__name__)
 
-_ANALYST_CN = {
-    "technical_analyst": "技术分析师",
-    "fundamental_analyst": "基本面分析师",
-    "microstructure_analyst": "市场微观结构分析师",
-    "sentiment_analyst": "市场情绪分析师",
-    "sector_analyst": "板块轮动分析师",
-    "news_analyst": "资讯事件分析师",
-}
-
 
 @dataclass
 class Stage1Results:
-    technical: str = ""
-    fundamental: str = ""
-    microstructure: str = ""
-    sentiment: str = ""
-    sector: str = ""
-    news: str = ""
-    scores: dict = field(default_factory=dict)
+    """
+    Stage 1 分析结果。
+
+    reports: dict[agent_id, report_text]
+        键为 agent_id（如 "technical_analyst"），值为该智能体的完整输出文本。
+        Stage 1 智能体由 config/agents/stage1.yaml 动态配置，数量不固定。
+
+    display_names: dict[agent_id, display_name]
+        用于日志和报告中的中文展示名。
+    """
+    reports: dict[str, str] = field(default_factory=dict)
+    display_names: dict[str, str] = field(default_factory=dict)
+
+    def format_for_context(self, max_chars_per_agent: int = 0) -> str:
+        """
+        将所有 Stage 1 报告格式化为下游智能体的输入上下文。
+
+        参数：
+            max_chars_per_agent: 每个报告的最大字符数，0 表示不截断。
+
+        返回格式：
+            ## Stage 1 分析报告汇总
+            ### [显示名]
+            [报告内容]
+            ...
+        """
+        if not self.reports:
+            return "## Stage 1 分析报告汇总\n\n（无可用分析报告）"
+
+        lines = ["## Stage 1 分析报告汇总"]
+        for agent_id, report in self.reports.items():
+            name = self.display_names.get(agent_id, agent_id)
+            text = report
+            if max_chars_per_agent > 0 and len(text) > max_chars_per_agent:
+                text = text[:max_chars_per_agent] + f"\n\n...（摘要截至 {max_chars_per_agent} 字）"
+            lines.append(f"\n### {name}\n{text}")
+
+        return "\n".join(lines)
 
 
 async def run_stage1(
@@ -40,60 +63,77 @@ async def run_stage1(
     packet: CalculatedDataPacket,
     available_tools: set[str],
     market_rules: str,
-    skills_list: str,
     llm_client: LLMClient,
     task_semaphore: asyncio.Semaphore,
     cancel_event: asyncio.Event,
 ) -> Stage1Results:
     """
-    Stage 1：六位专项分析师并行运行。
-    每个分析师通过 tool_injector 获取其专属数据上下文，然后调用 LLM。
-    任何一个分析师失败不影响其他分析师。
+    Stage 1：所有 Stage 1 分析师并行运行。
+
+    智能体列表从 config/agents/stage1.yaml 动态加载，用户可在该文件的 agents 列表中
+    增删条目来添加或移除分析师，无需修改代码。
+
+    任何一个分析师失败不影响其他分析师（return_exceptions=True）。
+    全部失败时抛出 RuntimeError 终止 Stage 1。
     """
-    logger.info(f"[Stage1] 启动 6 个分析师并行分析，股票: {stock_code}")
-    append_task_log(task_id, "[Stage1] 启动 6 个分析师并行分析")
+    analysts = get_stage1_agents()   # [(agent_id, display_name), ...]
+    count = len(analysts)
 
-    analysts = [
-        ("technical_analyst", "technical"),
-        ("fundamental_analyst", "fundamental"),
-        ("microstructure_analyst", "microstructure"),
-        ("sentiment_analyst", "sentiment"),
-        ("sector_analyst", "sector"),
-        ("news_analyst", "news"),
-    ]
+    logger.info(f"[Stage1] 启动 {count} 个分析师并行分析，股票: {stock_code}")
+    append_task_log(task_id, f"[Stage1] 启动 {count} 个分析师并行分析")
 
-    async def run_analyst(agent_name: str, field_name: str) -> tuple[str, str]:
+    async def run_analyst(agent_id: str, display_name: str) -> tuple[str, str]:
         if cancel_event.is_set():
             raise asyncio.CancelledError
-        cn_name = _ANALYST_CN.get(agent_name, agent_name)
         t0 = time.monotonic()
-        logger.info(f"[Stage1] ▶ {cn_name} 开始")
-        append_task_log(task_id, f"[Stage1] ▶ {cn_name} 开始")
-        agent = BaseAgent(agent_name, llm_client, task_semaphore, cancel_event)
-        user_context = inject_tools(agent_name, packet, available_tools)
-        result = await agent.run(user_context, market_rules, skills_list)
+        logger.info(f"[Stage1] ▶ {display_name} 开始")
+        append_task_log(task_id, f"[Stage1] ▶ {display_name} 开始")
+
+        agent = BaseAgent(agent_id, llm_client, task_semaphore, cancel_event)
+        user_context = inject_tools(agent_id, packet, available_tools)
+
+        agent_tools = get_agent_config(agent_id).get("tools", [])
+        save_data_evidence(
+            task_id, stock_code,
+            f"stage1_{agent_id}_data.md",
+            display_name, agent_id, "stage1",
+            agent_tools, user_context,
+        )
+
+        result = await agent.run(user_context, market_rules)
+
+        save_agent_output(task_id, stock_code, f"stage1_{agent_id}.md", result)
+
         elapsed = time.monotonic() - t0
-        msg = f"[Stage1] ✓ {cn_name} 完成（{elapsed:.1f}s，{len(result)}字）"
+        msg = f"[Stage1] ✓ {display_name} 完成（{elapsed:.1f}s，{len(result)}字）"
         logger.info(msg)
         append_task_log(task_id, msg)
-        return field_name, result
+        return agent_id, result
 
-    # 并行启动所有分析师，失败不中断（return_exceptions=True）
-    coroutines = [run_analyst(name, field) for name, field in analysts]
+    # 并行启动，失败不中断（return_exceptions=True）
+    coroutines = [run_analyst(aid, dname) for aid, dname in analysts]
     outcomes = await asyncio.gather(*coroutines, return_exceptions=True)
 
-    results = Stage1Results()
-    for (_, field_name), outcome in zip(analysts, outcomes):
+    results = Stage1Results(
+        display_names={aid: dname for aid, dname in analysts},
+    )
+    for (agent_id, display_name), outcome in zip(analysts, outcomes):
         if isinstance(outcome, asyncio.CancelledError):
             raise outcome
         elif isinstance(outcome, Exception):
-            msg = f"[Stage1] ✗ {field_name} 失败: {outcome}"
+            msg = f"[Stage1] ✗ {display_name} 失败: {outcome}"
             logger.error(msg)
             append_task_log(task_id, msg)
-            setattr(results, field_name, f"[{field_name}分析师执行失败：{outcome}，本维度不可用]")
+            results.reports[agent_id] = (
+                f"[{display_name} 执行失败：{outcome}，本维度不可用]"
+            )
         else:
             _, text = outcome
-            setattr(results, field_name, text)
+            results.reports[agent_id] = text
 
-    append_task_log(task_id, "[Stage1] ✓ 全部 6 位分析师完成")
+    all_failed = all(isinstance(o, Exception) for o in outcomes)
+    if all_failed:
+        raise RuntimeError(f"[Stage1] 全部 {count} 位分析师均失败，Stage1 不可用")
+
+    append_task_log(task_id, f"[Stage1] ✓ 全部 {count} 位分析师完成")
     return results

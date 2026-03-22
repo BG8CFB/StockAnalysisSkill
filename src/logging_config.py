@@ -32,6 +32,7 @@ def setup_logging() -> None:
         return
     _logging_configured = True
 
+    import datetime
     from src.config import settings
 
     logger.remove()  # 移除 loguru 默认 handler
@@ -50,8 +51,10 @@ def setup_logging() -> None:
         )
 
     settings.log_dir.mkdir(parents=True, exist_ok=True)
+    # 每次服务启动生成独立的时间戳日志文件（格式：app_YYYYMMDD_HHMMSS.log）
+    startup_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     logger.add(
-        str(settings.log_dir / "app-{time:YYYYMMDD}.log"),
+        str(settings.log_dir / f"app_{startup_ts}.log"),
         level=settings.log_level,
         format=(
             "{time:YYYY-MM-DD HH:mm:ss.SSS} | "
@@ -59,7 +62,7 @@ def setup_logging() -> None:
             "{name}:{function}:{line} | "
             "{message}"
         ),
-        rotation="00:00",
+        rotation="100 MB",          # 单文件超 100 MB 时滚动（防止超长运行撑爆磁盘）
         retention=f"{settings.log_retention_days} days",
         encoding="utf-8",
         enqueue=True,
@@ -67,4 +70,4 @@ def setup_logging() -> None:
 
     # 全量接管标准 logging（含 uvicorn / fastapi / httpx 等所有第三方库）
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
-    logger.info(f"[服务] 日志系统初始化完成，日志目录: {settings.log_dir}")
+    logger.info(f"[服务] 日志系统初始化完成，启动时间: {startup_ts}，日志目录: {settings.log_dir}")

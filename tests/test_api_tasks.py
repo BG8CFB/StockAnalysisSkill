@@ -5,10 +5,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 @pytest.fixture
 def mock_task_queue():
+    import asyncio
     q = MagicMock()
     q.enqueue = AsyncMock(return_value=1)
     q.cancel = AsyncMock(return_value=True)
     q.running_count = MagicMock(return_value=0)
+    # get_done_event returns a pre-set asyncio.Event so wait() returns immediately
+    done_event = asyncio.Event()
+    done_event.set()
+    q.get_done_event = MagicMock(return_value=done_event)
     return q
 
 
@@ -17,12 +22,10 @@ async def client(tmp_path, monkeypatch, mock_task_queue):
     from src import config
     import src.logging_config as lc
     monkeypatch.setattr(config.settings, "tasks_dir", tmp_path / "tasks")
-    monkeypatch.setattr(config.settings, "reports_dir", tmp_path / "reports")
     monkeypatch.setattr(config.settings, "log_dir", tmp_path / "logs")
     monkeypatch.setattr(config.settings, "log_console_enabled", False)
     monkeypatch.setattr(lc, "_logging_configured", False)
     (tmp_path / "tasks").mkdir()
-    (tmp_path / "reports").mkdir()
 
     from src.main import create_app
     app = create_app()
@@ -83,11 +86,11 @@ async def test_list_tasks(client):
     assert resp.json()["total"] >= 1
 
 
-async def test_cancel_task(client):
+async def test_delete_task(client):
     resp = await client.post("/api/v1/tasks", json={"stock_code": "000001.SZ"})
     task_id = resp.json()["task_id"]
     resp2 = await client.delete(f"/api/v1/tasks/{task_id}")
-    assert resp2.status_code == 200
+    assert resp2.status_code == 204
 
 
 async def test_invalid_stock_code(client):

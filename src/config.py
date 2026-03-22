@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     llm_model_id: str = "gpt-4o"
     llm_temperature: float = 0.3
     llm_max_tokens: int = 4096
-    llm_timeout_seconds: int = 120
+    llm_timeout_seconds: int = 180
     llm_max_retries: int = 3
 
     # 数据源
@@ -34,12 +34,12 @@ class Settings(BaseSettings):
 
     # 服务
     server_host: str = "127.0.0.1"
-    server_port: int = 8080
+    server_port: int = 8081
 
     # 存储
     tasks_dir: Path = Path("./tasks")
-    reports_dir: Path = Path("./reports")
-    task_file_retention_days: int = 30
+    completed_task_retention_days: int = 0   # 0 = 永久保留
+    failed_task_retention_days: int = 7
 
     # 分析
     analysis_capital_base: int = 100000

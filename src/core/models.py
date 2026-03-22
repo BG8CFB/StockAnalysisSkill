@@ -32,6 +32,7 @@ class TaskRecord(BaseModel):
     stock_code: str
     status: TaskStatus
     current_stage: Optional[str] = None
+    current_agent: Optional[str] = None          # 当前正在执行的智能体 ID
     stage_progress: dict[str, StageStatus] = Field(
         default_factory=lambda: {
             "stage1": StageStatus.PENDING,
@@ -40,6 +41,8 @@ class TaskRecord(BaseModel):
             "stage4": StageStatus.PENDING,
         }
     )
+    stages_completed: list[str] = Field(default_factory=list)  # 断点续跑依据
+    resume_count: int = 0                        # 累计续跑次数
     logs: list[str] = Field(default_factory=list)
     created_at: datetime
     started_at: Optional[datetime] = None

@@ -22,8 +22,10 @@ class CleanedDataPacket:
     dragon_tiger_raw: Optional[list]      # 龙虎榜
     sector_raw: Optional[dict]            # 板块分类
     news_raw: Optional[list]              # 新闻公告
-    financial_raw: Optional[dict]         # 财务三表摘要
+    financial_raw: Optional[dict]         # 财务三表摘要（含 fina_indicator / income / cashflow / balancesheet）
     market_sentiment_raw: Optional[pd.DataFrame]  # 市场整体涨跌停统计
+    shareholder_raw: Optional[dict]       # 股东人数趋势 / 质押 / 回购（仅 A 股）
+    dividend_raw: Optional[list]          # 分红历史
     anomalies: list[dict] = field(default_factory=list)
     missing_fields: list[str] = field(default_factory=list)
     available_tools: set[str] = field(default_factory=set)
@@ -61,6 +63,8 @@ def clean(raw: dict, available_tools: set[str]) -> CleanedDataPacket:
             news_raw=None,
             financial_raw=None,
             market_sentiment_raw=None,
+            shareholder_raw=None,
+            dividend_raw=[],
             missing_fields=["all_fields_unavailable_due_to_suspension"],
             available_tools=set(),
         )
@@ -110,6 +114,8 @@ def clean(raw: dict, available_tools: set[str]) -> CleanedDataPacket:
         news_raw=raw.get("news_raw"),
         financial_raw=raw.get("financial_raw"),
         market_sentiment_raw=raw.get("market_sentiment_raw"),
+        shareholder_raw=raw.get("shareholder_raw"),
+        dividend_raw=raw.get("dividend_raw", []),
         anomalies=anomalies,
         missing_fields=missing_fields,
         available_tools=available_tools,

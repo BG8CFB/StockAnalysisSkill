@@ -1,102 +1,181 @@
 from __future__ import annotations
 
+"""
+技能加载器。按 Agent Skills 开放标准 (agentskills.io/specification) 实现渐进式加载。
+
+目录结构：
+  skills/
+    skill-name/          # 技能目录（名称须与 SKILL.md 中 name 字段一致）
+      SKILL.md           # 必须：YAML frontmatter（name + description）+ 指令内容
+      references/        # 可选：补充文档（按需加载）
+      scripts/           # 可选：可执行脚本
+      assets/            # 可选：静态资源
+
+渐进式加载（Progressive Disclosure）：
+  第 1 层 - 元数据（~100 tokens/技能）：启动时扫描，提取 name + description
+  第 2 层 - 指令内容（<5000 tokens）：AI 决定调用时按需加载 SKILL.md body
+  第 3 层 - 资源文件（按需）：references/ scripts/ assets/ 中的文件按需加载
+"""
+
 import logging
-import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
 _SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"
-_skills_list_cache: Optional[str] = None
 
 
-def load_skills_list() -> str:
+@dataclass
+class SkillMeta:
+    """技能元数据（第 1 层：启动时加载）。"""
+    name: str
+    description: str
+    skill_dir: Path
+
+
+_skills_cache: Optional[list[SkillMeta]] = None
+
+
+# --------------------------------------------------------------------------- #
+# 内部工具                                                                      #
+# --------------------------------------------------------------------------- #
+
+def _parse_frontmatter(content: str) -> dict:
+    """从 SKILL.md 解析 YAML frontmatter。"""
+    if not content.startswith("---"):
+        return {}
+    end = content.find("---", 3)
+    if end < 0:
+        return {}
+    try:
+        return yaml.safe_load(content[3:end]) or {}
+    except yaml.YAMLError as e:
+        logger.warning(f"[SkillsLoader] YAML frontmatter 解析失败: {e}")
+        return {}
+
+
+def _extract_body(content: str) -> str:
+    """从 SKILL.md 提取 body 内容（去除 frontmatter）。"""
+    if not content.startswith("---"):
+        return content
+    end = content.find("---", 3)
+    if end < 0:
+        return content
+    return content[end + 3:].strip()
+
+
+# --------------------------------------------------------------------------- #
+# 公开接口                                                                      #
+# --------------------------------------------------------------------------- #
+
+def scan_skills() -> list[SkillMeta]:
     """
-    扫描 skills/*.md（排除 README.md），提取适用场景描述，返回格式化列表字符串。
+    扫描 skills/*/SKILL.md，提取元数据（第 1 层）。结果缓存。
 
-    从每个文件中尝试提取以下任一格式的适用场景：
-    1. YAML front matter 的 applicable_scenarios / description 字段
-    2. ## 适用场景 段落的第一行内容
-    3. 文件名本身（降级方案）
-
-    返回格式：
-    --- 可用技能列表 ---
-    [filename.md] — [适用场景描述]
-    ...
+    按规范要求：
+    - 只识别包含 SKILL.md 文件的子目录
+    - name 字段须与目录名一致
+    - name 和 description 均为必填
     """
-    global _skills_list_cache
-    if _skills_list_cache is not None:
-        return _skills_list_cache
+    global _skills_cache
+    if _skills_cache is not None:
+        return _skills_cache
 
     if not _SKILLS_DIR.exists():
-        _skills_list_cache = "--- 可用技能列表 ---\n（无可用技能）"
-        return _skills_list_cache
+        _skills_cache = []
+        return _skills_cache
 
-    skill_files = sorted(
-        f for f in _SKILLS_DIR.glob("*.md")
-        if f.name.lower() != "readme.md"
-    )
+    skills: list[SkillMeta] = []
+    for skill_dir in sorted(_SKILLS_DIR.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_md.exists():
+            continue
+        try:
+            content = skill_md.read_text(encoding="utf-8")
+            fm = _parse_frontmatter(content)
+            name = fm.get("name", "")
+            description = fm.get("description", "")
 
-    if not skill_files:
-        _skills_list_cache = "--- 可用技能列表 ---\n（无可用技能）"
-        return _skills_list_cache
+            if not name or not description:
+                logger.warning(
+                    f"[SkillsLoader] {skill_md}: frontmatter 缺少 name 或 description，跳过"
+                )
+                continue
 
-    lines = ["--- 可用技能列表 ---"]
-    for skill_file in skill_files:
-        description = _extract_description(skill_file)
-        lines.append(f"[{skill_file.name}] — {description}")
+            # 规范要求 name 须与目录名一致
+            if name != skill_dir.name:
+                logger.warning(
+                    f"[SkillsLoader] {skill_md}: name '{name}' 与目录名 '{skill_dir.name}' 不一致"
+                )
 
-    _skills_list_cache = "\n".join(lines)
-    return _skills_list_cache
+            skills.append(SkillMeta(name=name, description=description, skill_dir=skill_dir))
+        except Exception as e:
+            logger.warning(f"[SkillsLoader] 读取 {skill_md} 失败: {e}")
+
+    _skills_cache = skills
+    if skills:
+        logger.info(f"[SkillsLoader] 扫描完成：发现 {len(skills)} 个技能")
+    else:
+        logger.debug("[SkillsLoader] 扫描完成：未发现任何技能")
+    return skills
 
 
-def load_skill_content(skill_filename: str) -> str:
-    """返回 skills/{skill_filename} 的完整内容。"""
-    path = _SKILLS_DIR / skill_filename
-    if not path.exists():
-        logger.warning(f"[SkillsLoader] Skill file not found: {path}")
-        return f"[技能文件 {skill_filename} 未找到]"
-    return path.read_text(encoding="utf-8")
+def get_skill_tool_definitions() -> list[dict]:
+    """
+    构建 OpenAI function calling 格式的技能工具定义。
+
+    AI 只能看到 name 和 description，无法看到完整指令内容。
+    仅当 AI 决定调用时，才通过 execute_skill_call() 加载完整内容。
+    """
+    skills = scan_skills()
+    if not skills:
+        return []
+
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": skill.name,
+                "description": skill.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        }
+        for skill in skills
+    ]
 
 
-def _extract_description(skill_file: Path) -> str:
-    """从技能文件中提取适用场景描述。"""
-    try:
-        content = skill_file.read_text(encoding="utf-8")
-    except Exception as e:
-        logger.warning(f"[SkillsLoader] Failed to read {skill_file}: {e}")
-        return skill_file.stem
+def execute_skill_call(tool_name: str, _arguments: str = "") -> str:
+    """
+    执行技能调用：加载 SKILL.md body 完整内容（第 2 层）。
 
-    # 尝试 YAML front matter（以 --- 开头）
-    if content.startswith("---"):
-        end = content.find("---", 3)
-        if end > 0:
-            front_matter = content[3:end]
-            for key in ("applicable_scenarios", "description", "适用场景"):
-                m = re.search(rf"^{key}\s*:\s*(.+)$", front_matter, re.MULTILINE)
-                if m:
-                    return m.group(1).strip().strip('"\'')
+    由 LLMClient 多轮工具调用循环中的 tool_executor 回调调用。
+    """
+    skills = scan_skills()
+    for skill in skills:
+        if skill.name == tool_name:
+            skill_md = skill.skill_dir / "SKILL.md"
+            try:
+                content = skill_md.read_text(encoding="utf-8")
+                body = _extract_body(content)
+                logger.info(f"[SkillsLoader] 技能 '{tool_name}' 已激活（{len(body)} 字）")
+                return body
+            except Exception as e:
+                logger.error(f"[SkillsLoader] 加载技能 '{tool_name}' 失败: {e}")
+                return f"[技能 '{tool_name}' 加载失败: {e}]"
 
-    # 尝试 ## 适用场景 段落
-    m = re.search(r"##\s*适用场景\s*\n+(.+)", content)
-    if m:
-        line = m.group(1).strip()
-        # 去掉 markdown 列表符号
-        line = re.sub(r"^[-*]\s*", "", line)
-        if line:
-            return line
-
-    # 尝试文件第一个非空非标题行
-    for line in content.splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and not line.startswith("---"):
-            return line[:80]  # 截断过长描述
-
-    return skill_file.stem
+    return f"[技能 '{tool_name}' 未找到]"
 
 
 def invalidate_cache() -> None:
     """清除缓存（技能文件更新后调用）。"""
-    global _skills_list_cache
-    _skills_list_cache = None
+    global _skills_cache
+    _skills_cache = None

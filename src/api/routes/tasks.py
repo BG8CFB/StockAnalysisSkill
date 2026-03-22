@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, field_validator
 
 from src.core.models import TaskRecord, TaskStatus, StageStatus
 from src.core.task_queue import QueueFullError
-from src.core.task_store import create_task, get_task, list_tasks, update_task, find_active_task
+from src.core.task_store import (
+    create_task, get_task, list_tasks, update_task,
+    find_active_task, delete_task_folder, get_report_content,
+)
 from src.config import settings
 
 logger = logging.getLogger(__name__)
@@ -26,6 +30,9 @@ _CODE_PATTERN = re.compile(
     r"|^[A-Z]{1,5}\.[A-Z]{1,2}$", # 美股带后缀 BRK.A
     re.IGNORECASE,
 )
+
+# DELETE 等待 RUNNING 任务完成的超时（秒）
+_DELETE_WAIT_TIMEOUT = 5.0
 
 
 # ── 请求/响应模型 ─────────────────────────────────────────────────────────────
@@ -60,7 +67,10 @@ class TaskResponse(BaseModel):
     status: TaskStatus
     stock_code: str
     current_stage: Optional[str]
+    current_agent: Optional[str]
     stage_progress: dict[str, StageStatus]
+    stages_completed: list[str]
+    resume_count: int
     logs: list[str]
     created_at: datetime
     started_at: Optional[datetime]
@@ -74,7 +84,7 @@ class ReportResponse(BaseModel):
     task_id: str
     stock_code: str
     content: str
-    report_path: str
+    report_path: Optional[str]
     completed_at: Optional[datetime]
 
 
@@ -113,7 +123,7 @@ async def create_task_endpoint(request: Request, body: CreateTaskRequest):
     try:
         queue_pos = await task_queue.enqueue(task.task_id)
     except QueueFullError:
-        update_task(task.task_id, status=TaskStatus.FAILED, error="Queue is full")
+        update_task(task.task_id, task.stock_code, status=TaskStatus.FAILED, error="Queue is full")
         logger.warning(f"[API] 队列已满（max {settings.task_queue_max_size}），拒绝请求")
         raise HTTPException(
             status_code=429,
@@ -159,27 +169,41 @@ async def get_task_endpoint(task_id: str) -> TaskResponse:
     return _task_to_response(task)
 
 
-@router.delete("/{task_id}")
-async def cancel_task_endpoint(request: Request, task_id: str) -> dict:
-    """取消任务（PENDING 或 RUNNING 状态）。"""
-    logger.info(f"[API] 收到取消请求，task_id: {task_id}")
+@router.delete("/{task_id}", status_code=204)
+async def delete_task_endpoint(request: Request, task_id: str) -> Response:
+    """
+    删除任务及其全部文件（task.json / report.md / agents/ / data/）。
+
+    - PENDING/RUNNING：先发取消信号，等待最多 5s 完成，再删除文件夹
+    - COMPLETED/FAILED/CANCELLED：直接删除文件夹
+    - 404：任务不存在
+    """
     task = get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id!r} not found")
 
-    if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot cancel task in status '{task.status}'. Only PENDING/RUNNING tasks can be cancelled."
-        )
-
     task_queue = request.app.state.task_queue
-    cancelled = await task_queue.cancel(task_id)
+    stock_code = task.stock_code
 
-    if cancelled:
-        return {"message": f"Task {task_id} has been cancelled", "task_id": task_id}
+    if task.status in (TaskStatus.PENDING, TaskStatus.RUNNING):
+        logger.info(f"[API] 删除活跃任务 {task_id}（状态={task.status}），发送取消信号")
+        done_event = task_queue.get_done_event(task_id)
+        await task_queue.cancel(task_id)
+        try:
+            await asyncio.wait_for(done_event.wait(), timeout=_DELETE_WAIT_TIMEOUT)
+            logger.info(f"[API] 任务 {task_id} 已停止，开始删除文件")
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[API] 等待任务 {task_id} 停止超时（{_DELETE_WAIT_TIMEOUT}s），强制删除文件"
+            )
+
+    deleted = delete_task_folder(task_id, stock_code)
+    if deleted:
+        logger.info(f"[API] 任务 {task_id} 文件夹已删除")
     else:
-        return {"message": f"Task {task_id} cancellation signal sent (may still be running)", "task_id": task_id}
+        logger.warning(f"[API] 任务 {task_id} 文件夹不存在或已删除")
+
+    return Response(status_code=204)
 
 
 @router.get("/{task_id}/report", response_model=ReportResponse)
@@ -195,21 +219,13 @@ async def get_report_endpoint(task_id: str) -> ReportResponse:
             detail=f"Task is not completed yet (current status: '{task.status}'). Please wait."
         )
 
-    if not task.report_path:
+    content = get_report_content(task_id, task.stock_code)
+    if content is None:
         raise HTTPException(
             status_code=404,
-            detail="Report file path not recorded for this task"
+            detail="Report file not found for this task"
         )
 
-    from pathlib import Path
-    report_path = Path(task.report_path)
-    if not report_path.exists():
-        raise HTTPException(
-            status_code=404,
-            detail=f"Report file not found at: {task.report_path}"
-        )
-
-    content = report_path.read_text(encoding="utf-8")
     return ReportResponse(
         task_id=task.task_id,
         stock_code=task.stock_code,
@@ -227,7 +243,10 @@ def _task_to_response(task: TaskRecord) -> TaskResponse:
         status=task.status,
         stock_code=task.stock_code,
         current_stage=task.current_stage,
+        current_agent=task.current_agent,
         stage_progress=task.stage_progress,
+        stages_completed=task.stages_completed,
+        resume_count=task.resume_count,
         logs=task.logs,
         created_at=task.created_at,
         started_at=task.started_at,

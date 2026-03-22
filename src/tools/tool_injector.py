@@ -7,20 +7,28 @@ from __future__ import annotations
 逻辑：
   agent_config['tools'] ∩ available_tools → 注入实际数据
   差集（agent 需要但数据源无法提供）  → 注入占位符
+
+特殊返回值：
+  当智能体拥有工具配置、但全部工具均无数据时，返回以 DATA_MISSING_MARKER 开头的字符串。
+  调用方（BaseAgent）检测到此标记后将跳过 LLM 调用，直接输出数据缺失通知。
 """
 
 from typing import Optional
 
 from src.data.calculator import CalculatedDataPacket
-from src.agents.registry import AGENT_CONFIGS
+from src.agents.config_loader import get_agent_config
 from src.tools.data_tools import (
     price_tool, indicator_tool, fundamental_tool,
     capital_flow_tool, margin_tool, dragon_tiger_tool,
     sentiment_tool, sector_tool, news_tool,
-    snapshot_tool, risk_metric_tool,
+    snapshot_tool, shareholder_tool, risk_metric_tool,
 )
 
 _NA_PLACEHOLDER = "[{tool}未激活：{reason}，本维度数据不可用，分析时请标注N/A]"
+
+# 当智能体的全部工具均无有效数据时，inject_tools 返回值以此标记开头。
+# BaseAgent.run() 检测到此标记后直接返回数据缺失通知，不调用 LLM。
+DATA_MISSING_MARKER = "###ALL_TOOLS_UNAVAILABLE###\n"
 
 # 工具名 → 对应函数（除 risk_metric_tool 外都接受 packet 参数）
 _TOOL_FUNCTIONS = {
@@ -34,6 +42,7 @@ _TOOL_FUNCTIONS = {
     "sector_tool": sector_tool,
     "news_tool": news_tool,
     "snapshot_tool": snapshot_tool,
+    "shareholder_tool": shareholder_tool,
     # risk_metric_tool 单独处理（入参不同）
 }
 
@@ -54,21 +63,25 @@ def inject_tools(
         risk_results:    风控计算结果（仅 Stage 3 智能体需要）
 
     返回：
-        拼接后的 Markdown 字符串，作为 LLM 的 user_context 数据部分
+        拼接后的 Markdown 字符串，作为 LLM 的 user_context 数据部分。
+        若该智能体有工具配置但全部工具均无数据，返回以 DATA_MISSING_MARKER 开头的字符串，
+        BaseAgent 检测到此标记后将跳过 LLM 调用。
     """
-    config = AGENT_CONFIGS.get(agent_name, {})
-    agent_tools: list[str] = config.get("tools", [])
+    config = get_agent_config(agent_name)
+    agent_tools: list[str] = config["tools"]
 
     if not agent_tools:
         return ""  # Stage 2 部分智能体无数据工具，上游报告直接由调用方传入
 
     sections: list[str] = []
+    real_data_count = 0  # 实际获取到有效数据的工具数量
 
     for tool_name in agent_tools:
         if tool_name == "risk_metric_tool":
             # 风控工具：入参为 risk_results dict
             if risk_results is not None and tool_name in available_tools:
                 output = risk_metric_tool(risk_results)
+                real_data_count += 1
             else:
                 output = _NA_PLACEHOLDER.format(
                     tool=tool_name,
@@ -80,6 +93,7 @@ def inject_tools(
                 fn = _TOOL_FUNCTIONS[tool_name]
                 try:
                     output = fn(packet)
+                    real_data_count += 1
                 except Exception as e:
                     output = _NA_PLACEHOLDER.format(
                         tool=tool_name,
@@ -98,5 +112,15 @@ def inject_tools(
             )
 
         sections.append(output)
+
+    # 全部工具无数据：返回带标记的字符串，BaseAgent 将跳过 LLM 调用
+    if real_data_count == 0:
+        missing_tools = ", ".join(agent_tools)
+        na_detail = "\n\n---\n\n".join(sections)
+        return (
+            DATA_MISSING_MARKER
+            + f"所需工具（共 {len(agent_tools)} 个）全部无数据：{missing_tools}\n\n"
+            + na_detail
+        )
 
     return "\n\n---\n\n".join(sections)

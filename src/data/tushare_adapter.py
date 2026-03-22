@@ -131,6 +131,9 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
             df_north = pro.moneyflow_hsgt(start_date=start_date, end_date=end_date)
             if df_north is not None and not df_north.empty:
                 df_north = df_north.rename(columns={"north_money": "northbound_flow"})
+                # Tushare 返回的 hsgt 字段类型可能是 str，需要转换
+                if "northbound_flow" in df_north.columns:
+                    df_north["northbound_flow"] = pd.to_numeric(df_north["northbound_flow"], errors="coerce")
                 if raw.get("capital_flow_raw") is not None and "northbound_flow" in df_north.columns:
                     raw["capital_flow_raw"] = raw["capital_flow_raw"].merge(
                         df_north[["trade_date", "northbound_flow"]], on="trade_date", how="left"
@@ -247,19 +250,138 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
         logger.warning(f"[Tushare] 涨跌停统计数据拉取失败: {e}")
         raw["market_sentiment_raw"] = None
 
-    # 10. 财务数据摘要（最新2期）
+    # 10. 财务三表（扩展字段版）
+    # 利润表 + 现金流量表 + 资产负债表，report_type='1' 取合并报表，最新 8 期
+    _financial: dict = {}
     try:
-        df_income = pro.income(ts_code=stock_code, fields="ts_code,end_date,revenue,n_income")
-        df_cashflow = pro.cashflow(ts_code=stock_code, fields="ts_code,end_date,n_cashflow_act")
-        financial: dict = {}
+        _income_fields = (
+            "ts_code,end_date,report_type,revenue,n_income,n_income_attr_p,"
+            "oper_cost,sell_exp,admin_exp,fin_exp,operate_profit,ebit"
+        )
+        df_income = pro.income(ts_code=stock_code, fields=_income_fields)
         if df_income is not None and not df_income.empty:
-            financial["income"] = df_income.head(4).to_dict("records")
-        if df_cashflow is not None and not df_cashflow.empty:
-            financial["cashflow"] = df_cashflow.head(4).to_dict("records")
-        raw["financial_raw"] = financial if financial else None
+            if "report_type" in df_income.columns:
+                df_income = df_income[df_income["report_type"] == "1"]
+            df_income = df_income.sort_values("end_date", ascending=False).reset_index(drop=True)
+            _financial["income"] = df_income.head(8).to_dict("records")
     except Exception as e:
-        logger.warning(f"[Tushare] 财务数据拉取失败 {stock_code}: {e}")
-        raw["financial_raw"] = None
+        logger.warning(f"[Tushare] 利润表数据拉取失败 {stock_code}: {e}")
+
+    try:
+        _cashflow_fields = (
+            "ts_code,end_date,report_type,n_cashflow_act,free_cashflow,"
+            "c_pay_acq_const_fiolta,c_cash_equ_end_period,n_cashflow_inv_act"
+        )
+        df_cashflow = pro.cashflow(ts_code=stock_code, fields=_cashflow_fields)
+        if df_cashflow is not None and not df_cashflow.empty:
+            if "report_type" in df_cashflow.columns:
+                df_cashflow = df_cashflow[df_cashflow["report_type"] == "1"]
+            df_cashflow = df_cashflow.sort_values("end_date", ascending=False).reset_index(drop=True)
+            _financial["cashflow"] = df_cashflow.head(8).to_dict("records")
+    except Exception as e:
+        logger.warning(f"[Tushare] 现金流量表数据拉取失败 {stock_code}: {e}")
+
+    try:
+        _bs_fields = (
+            "ts_code,end_date,report_type,total_assets,total_liab,total_cur_assets,"
+            "total_hldr_eqy_exc_min_int,goodwill,money_cap,st_borr,"
+            "accounts_receiv,inventories"
+        )
+        df_bs = pro.balancesheet(ts_code=stock_code, fields=_bs_fields)
+        if df_bs is not None and not df_bs.empty:
+            if "report_type" in df_bs.columns:
+                df_bs = df_bs[df_bs["report_type"] == "1"]
+            df_bs = df_bs.sort_values("end_date", ascending=False).reset_index(drop=True)
+            _financial["balancesheet"] = df_bs.head(8).to_dict("records")
+    except Exception as e:
+        logger.warning(f"[Tushare] 资产负债表数据拉取失败 {stock_code}: {e}")
+
+    raw["financial_raw"] = _financial if _financial else None
+
+    # 11. 财务指标预算接口（fina_indicator）
+    # Tushare 已预算好的 ROE / 毛利率 / 增速 / 流动比率等，优先作为 fundamental_tool 主数据源。
+    # 若此接口失败（返回空/积分不足），financial_raw 不含 'fina_indicator' 键，
+    # calculator.py 将自动从三表原始数据本地计算（fallback）。
+    # AkShare 预留：未来可在此处增加 akshare_adapter.fetch_fina_indicator() 兜底。
+    try:
+        _fi_fields = (
+            "ts_code,ann_date,end_date,"
+            "roe,roa,grossprofit_margin,netprofit_margin,"
+            "current_ratio,quick_ratio,debt_to_assets,"
+            "tr_yoy,netprofit_yoy,or_yoy,"
+            "assets_turn,arturn_days,invturn_days,"
+            "ocf_to_profit,ocf_to_debt,"
+            "fcff,fcfe,"
+            "bps,ocfps,ebitda"
+        )
+        df_fi = pro.fina_indicator(ts_code=stock_code, fields=_fi_fields)
+        if df_fi is not None and not df_fi.empty:
+            df_fi = df_fi.sort_values("end_date", ascending=False).reset_index(drop=True)
+            if raw.get("financial_raw") is None:
+                raw["financial_raw"] = {}
+            raw["financial_raw"]["fina_indicator"] = df_fi.head(8).to_dict("records")
+            available.update(["fundamental_tool"])
+    except Exception as e:
+        logger.warning(f"[Tushare] 财务指标(fina_indicator)数据拉取失败 {stock_code}: {e}")
+
+    # 12. 分红历史（近 10 次）
+    try:
+        df_div = pro.dividend(
+            ts_code=stock_code,
+            fields="ts_code,end_date,ann_date,record_date,ex_date,cash_div_tax,stk_div"
+        )
+        if df_div is not None and not df_div.empty:
+            df_div = df_div.sort_values("end_date", ascending=False).reset_index(drop=True)
+            raw["dividend_raw"] = df_div.head(10).to_dict("records")
+        else:
+            raw["dividend_raw"] = []
+    except Exception as e:
+        logger.warning(f"[Tushare] 分红数据拉取失败 {stock_code}: {e}")
+        raw["dividend_raw"] = []
+
+    # 13-15. 股东结构数据（仅 A 股）
+    # shareholder_raw = {
+    #   "holder_num":  list[dict],  # 股东人数趋势（最近 8 期）
+    #   "pledge":      list[dict],  # 质押统计（最近 4 期）
+    #   "repurchase":  list[dict],  # 回购记录（最近 10 条）
+    # }
+    if stock_code.upper().endswith((".SZ", ".SH")):
+        _shareholder: dict = {}
+
+        # 13. 股东人数趋势
+        try:
+            df_hold_num = pro.stk_holdernumber(ts_code=stock_code)
+            if df_hold_num is not None and not df_hold_num.empty:
+                df_hold_num = df_hold_num.sort_values("end_date", ascending=False).reset_index(drop=True)
+                _shareholder["holder_num"] = df_hold_num.head(8).to_dict("records")
+        except Exception as e:
+            logger.warning(f"[Tushare] 股东人数数据拉取失败 {stock_code}: {e}")
+
+        # 14. 股权质押统计
+        try:
+            df_pledge = pro.pledge_stat(ts_code=stock_code)
+            if df_pledge is not None and not df_pledge.empty:
+                df_pledge = df_pledge.sort_values("end_date", ascending=False).reset_index(drop=True)
+                _shareholder["pledge"] = df_pledge.head(4).to_dict("records")
+        except Exception as e:
+            logger.warning(f"[Tushare] 质押统计数据拉取失败 {stock_code}: {e}")
+
+        # 15. 股票回购记录
+        try:
+            df_repurchase = pro.repurchase(ts_code=stock_code)
+            if df_repurchase is not None and not df_repurchase.empty:
+                df_repurchase = df_repurchase.sort_values("ann_date", ascending=False).reset_index(drop=True)
+                _shareholder["repurchase"] = df_repurchase.head(10).to_dict("records")
+        except Exception as e:
+            logger.warning(f"[Tushare] 回购数据拉取失败 {stock_code}: {e}")
+
+        if _shareholder:
+            raw["shareholder_raw"] = _shareholder
+            available.update(["shareholder_tool"])
+        else:
+            raw["shareholder_raw"] = None
+    else:
+        raw["shareholder_raw"] = None
 
     raw["metadata"]["available_count"] = len(available)
     logger.info(f"[Tushare] {stock_code} 数据拉取完成，可用工具: {available}")
