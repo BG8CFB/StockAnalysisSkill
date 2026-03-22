@@ -142,6 +142,8 @@ async def run_stage2(
     logger.info(f"[Stage2] Trading plan: {len(trading_plan)}ch")
     append_task_log(task_id, f"[Stage2] ✓ 交易计划书完成（{len(trading_plan)}字）")
 
+    append_task_log(task_id, "[Stage2] ✓ 多空辩论流程全部完成")
+
     return Stage2Results(
         bull_rounds=bull_rounds,
         bear_rounds=bear_rounds,

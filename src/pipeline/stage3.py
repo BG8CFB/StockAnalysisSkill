@@ -102,7 +102,6 @@ async def run_stage3(
         )
 
     risk_ctx = format_risk_results(var_result, a_share_result)
-    risk_results_dict = {"formatted": risk_ctx}
 
     if cancel_event.is_set():
         raise asyncio.CancelledError
