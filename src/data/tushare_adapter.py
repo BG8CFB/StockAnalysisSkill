@@ -56,17 +56,22 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
                 if adj_df is not None and not adj_df.empty:
                     adj_df = adj_df.rename(columns={"adj_factor": "adj"})
                     df = df.merge(adj_df[["trade_date", "adj"]], on="trade_date", how="left")
-                    df["adj"] = df["adj"].fillna(1.0)
+                    df = df.sort_values("trade_date").reset_index(drop=True)
+                    df["adj"] = df["adj"].ffill().bfill().fillna(1.0)
+                    
+                    # 计算前复权：当日收盘价 * (当日复权因子 / 最新复权因子)
+                    latest_adj = df["adj"].iloc[-1] if not df.empty else 1.0
                     for col in ["open", "high", "low", "close"]:
-                        df[f"{col}_adj"] = df[col] * df["adj"]
+                        df[f"{col}_adj"] = df[col] * (df["adj"] / latest_adj)
                 else:
+                    df = df.sort_values("trade_date").reset_index(drop=True)
                     for col in ["open", "high", "low", "close"]:
                         df[f"{col}_adj"] = df[col]
             except Exception:
+                df = df.sort_values("trade_date").reset_index(drop=True)
                 for col in ["open", "high", "low", "close"]:
                     df[f"{col}_adj"] = df[col]
 
-            df = df.sort_values("trade_date").reset_index(drop=True)
             raw["price_series"] = df
             available.update(["price_tool", "indicator_tool"])
         else:

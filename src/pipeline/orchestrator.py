@@ -148,9 +148,17 @@ async def run_pipeline(
 
             # ── 数据获取（每次都重新拉取，保证数据新鲜）────────────────────────
             append_task_log(task_id, "[数据] 开始拉取市场数据", stock_code)
-            raw, available = await tushare_fetch(stock_code)
-            if settings.akshare_enabled:
-                raw, available = await merge_with_tushare(raw, available, stock_code)
+            if settings.tushare_token:
+                # 有 Tushare Token：Tushare 为主，AkShare 补充
+                raw, available = await tushare_fetch(stock_code)
+                if settings.akshare_enabled:
+                    raw, available = await merge_with_tushare(raw, available, stock_code)
+            else:
+                # 无 Tushare Token：直接使用 AkShare 作为主数据源
+                from src.data.akshare_adapter import fetch_all as akshare_fetch_all
+                logger.info(f"[Pipeline] 未配置 Tushare Token，使用 AkShare 作为主数据源")
+                append_task_log(task_id, "[数据] 未配置 Tushare Token，使用 AkShare 主数据源", stock_code)
+                raw, available = await akshare_fetch_all(stock_code)
             logger.info(f"[Pipeline] 数据拉取完成，可用工具: {available}")
             append_task_log(task_id, f"[数据] 数据拉取完成，可用工具: {len(available)} 个", stock_code)
 
@@ -328,7 +336,6 @@ async def run_pipeline(
                 packet=packet,
                 available_tools=packet.available_tools,
                 market_rules=market_rules,
-                skills_list=skills_list,
                 llm_client=llm_client,
                 task_semaphore=task_semaphore,
                 cancel_event=cancel_event,

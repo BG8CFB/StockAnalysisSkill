@@ -19,7 +19,7 @@ def _recover_orphaned_tasks() -> None:
 
     注意：此函数在 worker 启动前同步执行，不存在竞争条件。
     """
-    from src.core.task_store import list_tasks, update_task, append_task_log, get_task
+    from src.core.task_store import list_tasks, update_task, append_task_log
     from src.core.models import TaskStatus
 
     # 处理 PENDING 任务（从未启动）

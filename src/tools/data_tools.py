@@ -7,8 +7,6 @@ from __future__ import annotations
 缺失字段返回标准占位符字符串。
 """
 
-from typing import Optional
-
 import pandas as pd
 
 from src.data.calculator import CalculatedDataPacket
@@ -51,13 +49,13 @@ def price_tool(packet: CalculatedDataPacket, window: int = 250) -> str:
     lines.append("|-----|---------|---------|---------|---------|------|-------|")
     for _, row in display.iterrows():
         date = str(row.get("trade_date", ""))
-        o = f"{row.get('open_adj', 0):.2f}" if pd.notna(row.get("open_adj")) else "N/A"
-        h = f"{row.get('high_adj', 0):.2f}" if pd.notna(row.get("high_adj")) else "N/A"
-        l = f"{row.get('low_adj', 0):.2f}" if pd.notna(row.get("low_adj")) else "N/A"
-        c = f"{row.get('close_adj', 0):.2f}" if pd.notna(row.get("close_adj")) else "N/A"
-        v = f"{row.get('vol', 0):.0f}" if pd.notna(row.get("vol")) else "N/A"
-        p = f"{row.get('pct_chg', 0):.2f}" if pd.notna(row.get("pct_chg")) else "N/A"
-        lines.append(f"| {date} | {o} | {h} | {l} | {c} | {v} | {p} |")
+        o_val = f"{row.get('open_adj', 0):.2f}" if pd.notna(row.get("open_adj")) else "N/A"
+        h_val = f"{row.get('high_adj', 0):.2f}" if pd.notna(row.get("high_adj")) else "N/A"
+        l_val = f"{row.get('low_adj', 0):.2f}" if pd.notna(row.get("low_adj")) else "N/A"
+        c_val = f"{row.get('close_adj', 0):.2f}" if pd.notna(row.get("close_adj")) else "N/A"
+        v_val = f"{row.get('vol', 0):.0f}" if pd.notna(row.get("vol")) else "N/A"
+        p_val = f"{row.get('pct_chg', 0):.2f}" if pd.notna(row.get("pct_chg")) else "N/A"
+        lines.append(f"| {date} | {o_val} | {h_val} | {l_val} | {c_val} | {v_val} | {p_val} |")
 
     lines.append(f"\n*完整历史：共{len(df)}条记录（{df.iloc[0].get('trade_date','?')} ~ {df.iloc[-1].get('trade_date','?')}）*")
 
@@ -608,7 +606,6 @@ def news_tool(packet: CalculatedDataPacket) -> str:
 
     # 按日期分组：近7日 / 近30日
     from datetime import datetime, timedelta
-    today = datetime.now().strftime("%Y%m%d")
     week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
     month_ago = (datetime.now() - timedelta(days=30)).strftime("%Y%m%d")
 
