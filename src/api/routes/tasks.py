@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
 from src.core.models import TaskRecord, TaskStatus, StageStatus
 from src.core.task_queue import QueueFullError
-from src.core.task_store import create_task, get_task, list_tasks, update_task
+from src.core.task_store import create_task, get_task, list_tasks, update_task, find_active_task
 from src.config import settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
 
@@ -48,6 +52,7 @@ class CreateTaskResponse(BaseModel):
     stock_code: str
     queue_position: int
     created_at: datetime
+    is_existing: bool = False
 
 
 class TaskResponse(BaseModel):
@@ -80,32 +85,54 @@ class TaskListResponse(BaseModel):
 
 # ── 路由处理器 ─────────────────────────────────────────────────────────────────
 
-@router.post("", status_code=201, response_model=CreateTaskResponse)
-async def create_task_endpoint(request: Request, body: CreateTaskRequest) -> CreateTaskResponse:
-    """创建新的股票分析任务。"""
-    task_queue = request.app.state.task_queue
+@router.post("", status_code=201)
+async def create_task_endpoint(request: Request, body: CreateTaskRequest):
+    """创建股票分析任务（幂等：相同股票已有活跃任务则返回 200）。"""
+    logger.info(f"[API] 收到分析请求，股票: {body.stock_code}")
 
-    # 创建任务记录
+    # 幂等检查：同一股票有 PENDING/RUNNING 任务时直接返回
+    existing = find_active_task(body.stock_code)
+    if existing:
+        logger.info(
+            f"[API] 发现重复任务，{body.stock_code} 已有进行中任务 "
+            f"{existing.task_id}，直接返回"
+        )
+        response = CreateTaskResponse(
+            task_id=existing.task_id,
+            status=existing.status,
+            stock_code=existing.stock_code,
+            queue_position=0,
+            created_at=existing.created_at,
+            is_existing=True,
+        )
+        return JSONResponse(status_code=200, content=response.model_dump(mode="json"))
+
+    task_queue = request.app.state.task_queue
     task = create_task(body.stock_code, body.note)
 
-    # 加入队列
     try:
         queue_pos = await task_queue.enqueue(task.task_id)
     except QueueFullError:
-        # 队列已满，删除刚创建的任务记录
         update_task(task.task_id, status=TaskStatus.FAILED, error="Queue is full")
+        logger.warning(f"[API] 队列已满（max {settings.task_queue_max_size}），拒绝请求")
         raise HTTPException(
             status_code=429,
-            detail=f"Task queue is full (max {settings.task_queue_max_size} pending + {task_queue.running_count()} running). Please try again later."
+            detail=(
+                f"Task queue is full (max {settings.task_queue_max_size}). "
+                "Please try again later."
+            ),
         )
 
-    return CreateTaskResponse(
+    logger.info(f"[API] 任务创建成功，task_id: {task.task_id}，队列位置: {queue_pos}")
+    response = CreateTaskResponse(
         task_id=task.task_id,
         status=task.status,
         stock_code=task.stock_code,
         queue_position=queue_pos,
         created_at=task.created_at,
+        is_existing=False,
     )
+    return JSONResponse(status_code=201, content=response.model_dump(mode="json"))
 
 
 @router.get("", response_model=TaskListResponse)
@@ -135,6 +162,7 @@ async def get_task_endpoint(task_id: str) -> TaskResponse:
 @router.delete("/{task_id}")
 async def cancel_task_endpoint(request: Request, task_id: str) -> dict:
     """取消任务（PENDING 或 RUNNING 状态）。"""
+    logger.info(f"[API] 收到取消请求，task_id: {task_id}")
     task = get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id!r} not found")
