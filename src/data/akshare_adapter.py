@@ -5,6 +5,20 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import pandas as pd
+import io
+
+# -----------------------------------------------------------------------------
+# Patch pandas.read_excel to support bytes input directly (for AkShare compat)
+# -----------------------------------------------------------------------------
+_original_read_excel = pd.read_excel
+def _patched_read_excel(*args, **kwargs):
+    if len(args) > 0 and isinstance(args[0], bytes):
+        args = (io.BytesIO(args[0]),) + args[1:]
+    elif "io" in kwargs and isinstance(kwargs["io"], bytes):
+        kwargs["io"] = io.BytesIO(kwargs["io"])
+    return _original_read_excel(*args, **kwargs)
+pd.read_excel = _patched_read_excel
+# -----------------------------------------------------------------------------
 
 logger = logging.getLogger(__name__)
 
@@ -75,19 +89,36 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
     # ────────────────────────────────────────────────────────────────────────
     try:
         if is_a_share:
-            df = ak.stock_zh_a_hist(
-                symbol=pure_code,
-                period="daily",
-                start_date=_to_akshare_date(start_date),
-                end_date=_to_akshare_date(end_date),
-                adjust="qfq",
-            )
+            df = None
+            try:
+                df = ak.stock_zh_a_hist(
+                    symbol=pure_code,
+                    period="daily",
+                    start_date=_to_akshare_date(start_date),
+                    end_date=_to_akshare_date(end_date),
+                    adjust="qfq",
+                )
+                if df is not None and df.empty:
+                    raise ValueError("stock_zh_a_hist returned empty dataframe (maybe future dates)")
+            except Exception as e_hist:
+                logger.warning(f"[AkShare] stock_zh_a_hist 拉取失败，尝试 fallback {stock_code}: {e_hist}")
+                try:
+                    df = ak.stock_zh_a_daily(
+                        symbol=sina_code,
+                        start_date=_to_akshare_date(start_date),
+                        end_date=_to_akshare_date(end_date),
+                        adjust="qfq",
+                    )
+                except Exception as e_daily:
+                    logger.warning(f"[AkShare] stock_zh_a_daily fallback 失败 {stock_code}: {e_daily}")
+
             if df is not None and not df.empty:
                 rename_map = {
                     "日期": "trade_date",
+                    "date": "trade_date",
                     "开盘": "open", "最高": "high", "最低": "low", "收盘": "close",
-                    "成交量": "vol", "成交额": "amount", "涨跌幅": "pct_chg",
-                    "涨跌额": "change", "换手率": "turnover_rate",
+                    "成交量": "vol", "volume": "vol", "成交额": "amount", "涨跌幅": "pct_chg",
+                    "涨跌额": "change", "换手率": "turnover_rate", "turnover": "turnover_rate"
                 }
                 df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
                 if "trade_date" in df.columns:
@@ -96,6 +127,8 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
                     if col in df.columns:
                         df[f"{col}_adj"] = df[col]
                 df = df.sort_values("trade_date").reset_index(drop=True)
+                if "close" in df.columns and "pct_chg" not in df.columns:
+                    df["pct_chg"] = df["close"].pct_change() * 100
                 raw["price_series"] = df
                 available.update(["price_tool", "indicator_tool"])
             else:
@@ -151,20 +184,19 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
 
     # ────────────────────────────────────────────────────────────────────────
     # 2. 每日基本面（PE/PB/PS/换手率/市值）
-    #    stock_a_lg_indicator 返回 A 股历史估值序列
+    #    stock_value_em 返回 A 股个股每日估值
     # ────────────────────────────────────────────────────────────────────────
     if is_a_share:
         try:
-            df_basic = ak.stock_a_lg_indicator(symbol=pure_code)
+            df_basic = ak.stock_value_em(symbol=pure_code)
             if df_basic is not None and not df_basic.empty:
                 rename_map = {
-                    "trade_date": "trade_date",
-                    "pe": "pe_ttm",
-                    "pb": "pb_mrq",
-                    "ps": "ps_ttm",
-                    "dv_ratio": "dividend_yield",
-                    "total_mv": "total_mv",
-                    "float_mv": "circ_mv",
+                    "数据日期": "trade_date",
+                    "PE(TTM)": "pe_ttm",
+                    "市净率": "pb_mrq",
+                    "市销率": "ps_ttm",
+                    "总市值": "total_mv",
+                    "流通市值": "circ_mv",
                 }
                 df_basic = df_basic.rename(
                     columns={k: v for k, v in rename_map.items() if k in df_basic.columns}
@@ -316,35 +348,38 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
 
     # ────────────────────────────────────────────────────────────────────────
     # 5. 龙虎榜（仅 A 股）
-    #    stock_lhb_stock_detail_em 返回个股历史龙虎榜上榜记录
+    #    stock_lhb_detail_em 获取历史区间记录并筛选个股
     # ────────────────────────────────────────────────────────────────────────
     if is_a_share:
         try:
-            df_lhb = ak.stock_lhb_stock_detail_em(symbol=pure_code)
+            # 取近 90 日的日期
+            start_lhb = _days_ago(90)
+            end_lhb = end_date
+            df_lhb = ak.stock_lhb_detail_em(start_date=start_lhb, end_date=end_lhb)
             if df_lhb is not None and not df_lhb.empty:
-                rename_map = {
-                    "上榜日期": "trade_date",
-                    "买入额（万元）": "buy_amount",
-                    "卖出额（万元）": "sell_amount",
-                    "净买入（万元）": "net_amount",
-                    "上榜原因": "reason",
-                }
-                df_lhb = df_lhb.rename(
-                    columns={k: v for k, v in rename_map.items() if k in df_lhb.columns}
-                )
-                if "trade_date" in df_lhb.columns:
-                    df_lhb["trade_date"] = pd.to_datetime(
-                        df_lhb["trade_date"]
-                    ).dt.strftime("%Y%m%d")
-                # 过滤近 90 日
-                cutoff = _days_ago(90)
-                if "trade_date" in df_lhb.columns:
-                    df_lhb = df_lhb[df_lhb["trade_date"] >= cutoff]
-                df_lhb = df_lhb.sort_values("trade_date", ascending=False).reset_index(drop=True)
-                records = df_lhb.head(30).to_dict("records")
-                if records:
-                    raw["dragon_tiger_raw"] = records
-                    available.update(["dragon_tiger_tool"])
+                df_lhb = df_lhb[df_lhb["代码"] == pure_code]
+                if not df_lhb.empty:
+                    rename_map = {
+                        "上榜日": "trade_date",
+                        "龙虎榜买入额": "buy_amount",
+                        "龙虎榜卖出额": "sell_amount",
+                        "龙虎榜净买额": "net_amount",
+                        "上榜原因": "reason",
+                    }
+                    df_lhb = df_lhb.rename(
+                        columns={k: v for k, v in rename_map.items() if k in df_lhb.columns}
+                    )
+                    if "trade_date" in df_lhb.columns:
+                        df_lhb["trade_date"] = pd.to_datetime(
+                            df_lhb["trade_date"]
+                        ).dt.strftime("%Y%m%d")
+                    df_lhb = df_lhb.sort_values("trade_date", ascending=False).reset_index(drop=True)
+                    records = df_lhb.head(30).to_dict("records")
+                    if records:
+                        raw["dragon_tiger_raw"] = records
+                        available.update(["dragon_tiger_tool"])
+                    else:
+                        raw["dragon_tiger_raw"] = None
                 else:
                     raw["dragon_tiger_raw"] = None
             else:
@@ -360,19 +395,20 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
     # ────────────────────────────────────────────────────────────────────────
     if is_a_share:
         try:
-            df_news = ak.stock_notice_report(symbol=pure_code)
+            df_news = ak.stock_news_em(symbol=pure_code)
             if df_news is not None and not df_news.empty:
                 rename_map = {
-                    "公告日期": "ann_date",
-                    "公告标题": "title",
+                    "发布时间": "ann_date",
+                    "新闻标题": "title",
                 }
                 df_news = df_news.rename(
                     columns={k: v for k, v in rename_map.items() if k in df_news.columns}
                 )
                 if "ann_date" in df_news.columns:
                     cutoff = _days_ago(60)
+                    # 格式化日期并截断时分秒
                     df_news["ann_date"] = pd.to_datetime(
-                        df_news["ann_date"]
+                        df_news["ann_date"].str[:10]
                     ).dt.strftime("%Y%m%d")
                     df_news = df_news[df_news["ann_date"] >= cutoff]
                 news_records = (
@@ -392,31 +428,17 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
 
     # ────────────────────────────────────────────────────────────────────────
     # 7. 板块/行业分类（A 股）
-    #    stock_individual_info_em 可返回个股基本信息，含行业分类
+    #    stock_profile_cninfo 可返回个股基本信息，含行业分类
     # ────────────────────────────────────────────────────────────────────────
     if is_a_share:
         try:
-            df_info = ak.stock_individual_info_em(symbol=pure_code)
+            df_info = ak.stock_profile_cninfo(symbol=pure_code)
             concepts = []
             if df_info is not None and not df_info.empty:
-                # df_info 通常是两列：item / value 格式
-                info_dict: dict = {}
-                if "item" in df_info.columns and "value" in df_info.columns:
-                    info_dict = dict(zip(df_info["item"], df_info["value"]))
-                elif len(df_info.columns) >= 2:
-                    info_dict = dict(zip(df_info.iloc[:, 0], df_info.iloc[:, 1]))
-                # 提取行业
-                for key in ["行业", "所属行业", "行业分类"]:
-                    val = info_dict.get(key)
+                if "所属行业" in df_info.columns:
+                    val = df_info.iloc[0]["所属行业"]
                     if val and str(val).strip() and str(val).strip() != "nan":
                         concepts.append(str(val).strip())
-                        break
-                # 提取地区
-                for key in ["地区", "所在地区"]:
-                    val = info_dict.get(key)
-                    if val and str(val).strip() and str(val).strip() != "nan":
-                        concepts.append(str(val).strip())
-                        break
             raw["sector_raw"] = {"concepts": concepts}
             available.update(["sector_tool"])
         except Exception as e:
@@ -432,7 +454,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
 
     # ────────────────────────────────────────────────────────────────────────
     # 9. 市场情绪（全市场涨跌停统计，近 10 个交易日）
-    #    stock_zt_pool_em / stock_dt_pool_em 返回指定日期涨跌停股票池
+    #    stock_zt_pool_em / stock_zt_pool_dtgc_em 返回指定日期涨跌停股票池
     # ────────────────────────────────────────────────────────────────────────
     if is_a_share:
         try:
@@ -441,7 +463,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
             for trade_dt in recent_dates[:20]:
                 try:
                     df_up = ak.stock_zt_pool_em(date=trade_dt)
-                    df_dn = ak.stock_dt_pool_em(date=trade_dt)
+                    df_dn = ak.stock_zt_pool_dtgc_em(date=trade_dt)
                     up_count = len(df_up) if (df_up is not None and not df_up.empty) else 0
                     dn_count = len(df_dn) if (df_dn is not None and not df_dn.empty) else 0
                     if up_count > 0 or dn_count > 0:
@@ -699,19 +721,17 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
 
     # ────────────────────────────────────────────────────────────────────────
     # 12. 股东结构（仅 A 股）
-    #     stock_main_stock_holder 返回主要股东信息（含股东总数）
     # ────────────────────────────────────────────────────────────────────────
     if is_a_share:
         _shareholder: dict = {}
 
-        # 12a. 股东人数趋势（从 stock_main_stock_holder 提取 股东总数 字段）
+        # 12a. 股东人数趋势
         try:
-            df_holder = ak.stock_main_stock_holder(stock=pure_code)
+            df_holder = ak.stock_zh_a_gdhs_detail_em(symbol=pure_code)
             if df_holder is not None and not df_holder.empty:
-                # 按截至日期分组，取每期的股东总数
-                date_col = "截至日期" if "截至日期" in df_holder.columns else None
-                num_col = "股东总数" if "股东总数" in df_holder.columns else None
-                if date_col and num_col:
+                date_col = "股东户数统计截止日"
+                num_col = "股东户数-本次"
+                if date_col in df_holder.columns and num_col in df_holder.columns:
                     holder_summary = (
                         df_holder[[date_col, num_col]]
                         .drop_duplicates(subset=[date_col])
@@ -736,33 +756,20 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
         except Exception as e:
             logger.warning(f"[AkShare] 股东人数数据拉取失败 {stock_code}: {e}")
 
-        # 12b. 股权质押（东方财富）
+        # 12b. 股权质押
         try:
-            df_pledge = ak.stock_pledge_detail_em(symbol=pure_code)
+            df_pledge = ak.stock_gpzy_pledge_ratio_em()
             if df_pledge is not None and not df_pledge.empty:
-                # 字段差异较大，尽量兼容
-                pledge_records = df_pledge.head(4).to_dict("records")
-                # 尝试标准化字段名
-                standardized = []
-                for rec in pledge_records:
-                    std_rec: dict = {}
-                    for k, v in rec.items():
-                        key_lower = str(k).lower()
-                        if "日期" in k or "date" in key_lower:
-                            std_rec["end_date"] = str(v)
-                        elif "质押比例" in k or "ratio" in key_lower:
-                            try:
-                                std_rec["pledge_ratio"] = float(v)
-                            except (TypeError, ValueError):
-                                pass
-                        elif "质押股数" in k or "数量" in k:
-                            try:
-                                std_rec["unrest_pledge"] = float(v)
-                            except (TypeError, ValueError):
-                                pass
-                    standardized.append(std_rec)
-                if standardized:
-                    _shareholder["pledge"] = standardized
+                df_pledge = df_pledge[df_pledge["股票代码"] == pure_code]
+                if not df_pledge.empty:
+                    p = df_pledge.iloc[0]
+                    _shareholder["pledge"] = [{
+                        "end_date": str(p.get("交易日期", "")),
+                        "pledge_ratio": float(p.get("质押比例", 0)) if p.get("质押比例") else 0.0,
+                        "pledge_count": int(p.get("质押笔数", 0)) if p.get("质押笔数") else 0,
+                        "unrest_pledge": float(p.get("无限售股质押数", 0)) * 10000 if p.get("无限售股质押数") else 0.0,
+                        "rest_pledge": float(p.get("限售股质押数", 0)) * 10000 if p.get("限售股质押数") else 0.0,
+                    }]
         except Exception as e:
             logger.warning(f"[AkShare] 质押数据拉取失败 {stock_code}: {e}")
 
