@@ -38,3 +38,6 @@ tasks/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# AI temp files
+.ai_temp/

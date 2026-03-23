@@ -14,6 +14,7 @@
   第 2 层 - 指令内容（<5000 tokens）：AI 决定调用时按需加载 SKILL.md body
   第 3 层 - 资源文件（按需）：references/ scripts/ assets/ 中的文件按需加载
 """
+
 from __future__ import annotations
 
 import logging
@@ -31,6 +32,7 @@ _SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"
 @dataclass
 class SkillMeta:
     """技能元数据（第 1 层：启动时加载）。"""
+
     name: str
     description: str
     skill_dir: Path
@@ -42,6 +44,7 @@ _skills_cache: Optional[list[SkillMeta]] = None
 # --------------------------------------------------------------------------- #
 # 内部工具                                                                      #
 # --------------------------------------------------------------------------- #
+
 
 def _parse_frontmatter(content: str) -> dict:
     """从 SKILL.md 解析 YAML frontmatter。"""
@@ -64,12 +67,13 @@ def _extract_body(content: str) -> str:
     end = content.find("---", 3)
     if end < 0:
         return content
-    return content[end + 3:].strip()
+    return content[end + 3 :].strip()
 
 
 # --------------------------------------------------------------------------- #
 # 公开接口                                                                      #
 # --------------------------------------------------------------------------- #
+
 
 def scan_skills() -> list[SkillMeta]:
     """
@@ -113,7 +117,9 @@ def scan_skills() -> list[SkillMeta]:
                     f"[SkillsLoader] {skill_md}: name '{name}' 与目录名 '{skill_dir.name}' 不一致"
                 )
 
-            skills.append(SkillMeta(name=name, description=description, skill_dir=skill_dir))
+            skills.append(
+                SkillMeta(name=name, description=description, skill_dir=skill_dir)
+            )
         except Exception as e:
             logger.warning(f"[SkillsLoader] 读取 {skill_md} 失败: {e}")
 
@@ -165,7 +171,9 @@ def execute_skill_call(tool_name: str, _arguments: str = "") -> str:
             try:
                 content = skill_md.read_text(encoding="utf-8")
                 body = _extract_body(content)
-                logger.info(f"[SkillsLoader] 技能 '{tool_name}' 已激活（{len(body)} 字）")
+                logger.info(
+                    f"[SkillsLoader] 技能 '{tool_name}' 已激活（{len(body)} 字）"
+                )
                 return body
             except Exception as e:
                 logger.error(f"[SkillsLoader] 加载技能 '{tool_name}' 失败: {e}")

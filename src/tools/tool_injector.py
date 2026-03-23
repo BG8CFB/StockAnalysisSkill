@@ -10,6 +10,7 @@
   当智能体拥有工具配置、但全部工具均无数据时，返回以 DATA_MISSING_MARKER 开头的字符串。
   调用方（BaseAgent）检测到此标记后将跳过 LLM 调用，直接输出数据缺失通知。
 """
+
 from __future__ import annotations
 
 from typing import Optional
@@ -17,10 +18,18 @@ from typing import Optional
 from src.data.calculator import CalculatedDataPacket
 from src.agents.config_loader import get_agent_config
 from src.tools.data_tools import (
-    price_tool, indicator_tool, fundamental_tool,
-    capital_flow_tool, margin_tool, dragon_tiger_tool,
-    sentiment_tool, sector_tool, news_tool,
-    snapshot_tool, shareholder_tool, risk_metric_tool,
+    price_tool,
+    indicator_tool,
+    fundamental_tool,
+    capital_flow_tool,
+    margin_tool,
+    dragon_tiger_tool,
+    sentiment_tool,
+    sector_tool,
+    news_tool,
+    snapshot_tool,
+    shareholder_tool,
+    risk_metric_tool,
 )
 
 _NA_PLACEHOLDER = "[{tool}未激活：{reason}，本维度数据不可用，分析时请标注N/A]"
@@ -84,7 +93,9 @@ def inject_tools(
             else:
                 output = _NA_PLACEHOLDER.format(
                     tool=tool_name,
-                    reason="风控计算结果未传入" if risk_results is None else "风控数据不可用",
+                    reason="风控计算结果未传入"
+                    if risk_results is None
+                    else "风控数据不可用",
                 )
         elif tool_name in _TOOL_FUNCTIONS:
             if tool_name in available_tools:
