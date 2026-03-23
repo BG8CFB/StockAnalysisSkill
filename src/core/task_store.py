@@ -282,6 +282,33 @@ def get_report_content(task_id: str, stock_code: Optional[str] = None) -> Option
     return report_path.read_text("utf-8") if report_path.exists() else None
 
 
+def list_agent_outputs(
+    task_id: str,
+    stock_code: Optional[str] = None,
+) -> list[tuple[str, str]]:
+    """
+    列出任务已生成的智能体输出文件，返回 [(filename, content), ...] 列表。
+    按文件名升序排列（stage1 < stage2 < stage3 的自然顺序）。
+    文件夹不存在或为空时返回空列表。
+    """
+    if stock_code:
+        agents_dir = task_folder(task_id, stock_code) / "agents"
+    else:
+        task_fdr = find_task_folder(task_id)
+        agents_dir = (task_fdr / "agents") if task_fdr else None
+
+    if agents_dir is None or not agents_dir.exists():
+        return []
+
+    results: list[tuple[str, str]] = []
+    for f in sorted(agents_dir.glob("*.md")):
+        try:
+            results.append((f.name, f.read_text("utf-8")))
+        except Exception:
+            continue
+    return results
+
+
 # --------------------------------------------------------------------------- #
 # 自动清理                                                                      #
 # --------------------------------------------------------------------------- #

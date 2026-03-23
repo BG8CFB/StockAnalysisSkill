@@ -15,6 +15,7 @@ from src.core.task_queue import QueueFullError
 from src.core.task_store import (
     create_task, get_task, list_tasks, update_task,
     find_active_task, delete_task_folder, get_report_content,
+    list_agent_outputs,
 )
 from src.config import settings
 
@@ -86,6 +87,25 @@ class ReportResponse(BaseModel):
     content: str
     report_path: Optional[str]
     completed_at: Optional[datetime]
+
+
+class AgentOutputItem(BaseModel):
+    filename: str          # 原始文件名，如 stage1_technical_analyst.md
+    stage: str             # stage1 / stage2 / stage3
+    agent_id: str          # technical_analyst / bull_researcher 等
+    display_name: str      # 技术分析师 / 看涨分析师 等
+    round: Optional[int]   # 仅多空辩论轮次有值（0-based）
+    content: str           # 报告全文
+
+
+class TaskAgentsResponse(BaseModel):
+    task_id: str
+    stock_code: str
+    task_status: TaskStatus
+    current_stage: Optional[str]
+    current_agent: Optional[str]
+    agents: list[AgentOutputItem]   # 已完成的智能体报告列表
+    final_report: Optional[str]     # report.md 内容（仅 COMPLETED 时有值）
 
 
 class TaskListResponse(BaseModel):
@@ -235,7 +255,99 @@ async def get_report_endpoint(task_id: str) -> ReportResponse:
     )
 
 
+# ── 路由：智能体报告列表 ────────────────────────────────────────────────────────
+
+@router.get("/{task_id}/agents", response_model=TaskAgentsResponse)
+async def list_task_agents_endpoint(task_id: str) -> TaskAgentsResponse:
+    """
+    返回任务所有已完成的智能体报告（含全文内容）及最终报告。
+
+    适合 AI 客户端（如 OpenClaw Skill）定期轮询：
+    - 每 2 分钟调用一次，取出 agents 列表与上次对比，将新增报告推送给用户
+    - 任务完成时 final_report 有值，即为最终投资报告
+    - 任务未开始/不存在时返回 404
+    """
+    task = get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id!r} not found")
+
+    raw_outputs = list_agent_outputs(task_id, task.stock_code)
+    agents = [_enrich_agent_output(fname, content) for fname, content in raw_outputs]
+
+    final_report: Optional[str] = None
+    if task.status == TaskStatus.COMPLETED:
+        final_report = get_report_content(task_id, task.stock_code)
+
+    return TaskAgentsResponse(
+        task_id=task.task_id,
+        stock_code=task.stock_code,
+        task_status=task.status,
+        current_stage=task.current_stage,
+        current_agent=task.current_agent,
+        agents=agents,
+        final_report=final_report,
+    )
+
+
 # ── 辅助函数 ──────────────────────────────────────────────────────────────────
+
+# 静态文件名 → (display_name) 映射，用于无法从 config_loader 推导的情况
+_STATIC_DISPLAY_NAMES: dict[str, str] = {
+    "technical_analyst": "技术分析师",
+    "fundamental_analyst": "基本面分析师",
+    "microstructure_analyst": "市场微观结构分析师",
+    "sentiment_analyst": "市场情绪分析师",
+    "sector_analyst": "板块轮动分析师",
+    "news_analyst": "资讯事件分析师",
+    "bull_researcher": "看涨分析师",
+    "bear_researcher": "看跌分析师",
+    "research_director": "研究主管",
+    "trading_planner": "交易计划师",
+    "aggressive_risk_manager": "激进风控师",
+    "conservative_risk_manager": "保守风控师",
+    "quant_risk_manager": "量化风控师",
+    "chief_risk_officer": "首席风控官",
+    "investment_advisor": "投资顾问（最终报告）",
+}
+
+# 匹配 stage2 多空辩论轮次文件名：stage2_bull_r0, stage2_bear_r2 …
+_DEBATE_RE = re.compile(r"^stage2_(bull|bear)_r(\d+)$")
+
+
+def _enrich_agent_output(filename: str, content: str) -> AgentOutputItem:
+    """将文件名解析为结构化 AgentOutputItem，用于前端/AI 客户端展示。"""
+    stem = filename.removesuffix(".md")
+
+    # 提取阶段前缀
+    m = re.match(r"^(stage[123])_(.+)$", stem)
+    if not m:
+        return AgentOutputItem(
+            filename=filename, stage="unknown", agent_id=stem,
+            display_name=stem, round=None, content=content,
+        )
+
+    stage = m.group(1)
+    rest = m.group(2)
+
+    # 多空辩论轮次
+    debate_m = _DEBATE_RE.match(stem)
+    if debate_m:
+        side = debate_m.group(1)          # bull / bear
+        rnd = int(debate_m.group(2))
+        agent_id = f"{side}_researcher"
+        base_name = _STATIC_DISPLAY_NAMES.get(agent_id, agent_id)
+        display = f"{base_name} 第{rnd + 1}轮"
+        return AgentOutputItem(
+            filename=filename, stage=stage, agent_id=agent_id,
+            display_name=display, round=rnd, content=content,
+        )
+
+    display_name = _STATIC_DISPLAY_NAMES.get(rest, rest)
+    return AgentOutputItem(
+        filename=filename, stage=stage, agent_id=rest,
+        display_name=display_name, round=None, content=content,
+    )
+
 
 def _task_to_response(task: TaskRecord) -> TaskResponse:
     return TaskResponse(
