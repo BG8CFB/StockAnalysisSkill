@@ -151,7 +151,13 @@ async def run_pipeline(
             if settings.tushare_token:
                 # 有 Tushare Token：Tushare 为主，AkShare 补充
                 raw, available = await tushare_fetch(stock_code)
-                if settings.akshare_enabled:
+                # 关键修复：TU Token无效或完全失败时，回退到AkShare主模式
+                if not available or len(available) == 0:
+                    logger.warning("[Pipeline] Tushare 未返回任何可用工具，回退到 AkShare 主数据源")
+                    append_task_log(task_id, "[数据] ⚠ Tushare 无可用数据，回退到 AkShare 主数据源", stock_code)
+                    from src.data.akshare_adapter import fetch_all as akshare_fetch_all
+                    raw, available = await akshare_fetch_all(stock_code)
+                elif settings.akshare_enabled:
                     raw, available = await merge_with_tushare(raw, available, stock_code)
             else:
                 # 无 Tushare Token：直接使用 AkShare 作为主数据源
