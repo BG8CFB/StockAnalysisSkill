@@ -1,11 +1,10 @@
-from __future__ import annotations
-
 """
 11 个数据工具函数。
 每个函数输入 CalculatedDataPacket（或特殊参数），输出格式化 Markdown 字符串。
 包含元信息头部（来源/时间/质量等级）。
 缺失字段返回标准占位符字符串。
 """
+from __future__ import annotations
 
 import pandas as pd
 
@@ -103,8 +102,8 @@ def indicator_tool(packet: CalculatedDataPacket) -> str:
     # MACD
     m = packet.macd
     lines.append("### MACD（12-26-9）")
-    lines.append(f"| DIF | DEA | MACD柱 | 信号 | 最近金叉/死叉距今天数 |")
-    lines.append(f"|-----|-----|-------|------|---------------------|")
+    lines.append("| DIF | DEA | MACD柱 | 信号 | 最近金叉/死叉距今天数 |")
+    lines.append("|-----|-----|-------|------|---------------------|")
     lines.append(
         f"| {_fmt(m.get('macd_dif'))} | {_fmt(m.get('macd_dea'))} "
         f"| {_fmt(m.get('macd_bar'))} | {m.get('macd_signal','N/A')} "
@@ -114,22 +113,22 @@ def indicator_tool(packet: CalculatedDataPacket) -> str:
     # RSI
     r = packet.rsi
     lines.append("\n### RSI（14）")
-    lines.append(f"| RSI14 | 信号 | 背离 |")
-    lines.append(f"|-------|------|------|")
+    lines.append("| RSI14 | 信号 | 背离 |")
+    lines.append("|-------|------|------|")
     lines.append(f"| {_fmt(r.get('rsi_14'))} | {r.get('rsi_signal','N/A')} | {r.get('rsi_divergence','N/A')} |")
 
     # KDJ
     k = packet.kdj
     lines.append("\n### KDJ（9-3-3）")
-    lines.append(f"| K | D | J | 信号 |")
-    lines.append(f"|---|---|---|------|")
+    lines.append("| K | D | J | 信号 |")
+    lines.append("|---|---|---|------|")
     lines.append(f"| {_fmt(k.get('kdj_k'))} | {_fmt(k.get('kdj_d'))} | {_fmt(k.get('kdj_j'))} | {k.get('kdj_signal','N/A')} |")
 
     # 布林带
     b = packet.bollinger
     lines.append("\n### 布林带（20-2）")
-    lines.append(f"| 上轨 | 中轨 | 下轨 | 带宽 | 位置% | 信号 |")
-    lines.append(f"|------|------|------|------|-------|------|")
+    lines.append("| 上轨 | 中轨 | 下轨 | 带宽 | 位置% | 信号 |")
+    lines.append("|------|------|------|------|-------|------|")
     lines.append(
         f"| {_fmt(b.get('bb_upper'))} | {_fmt(b.get('bb_middle'))} "
         f"| {_fmt(b.get('bb_lower'))} | {_fmt(b.get('bb_bandwidth'))} "
@@ -264,7 +263,7 @@ def fundamental_tool(packet: CalculatedDataPacket) -> str:
             try:
                 lines.append(f"- **企业自由现金流（FCF）**：{float(fcff_v)/1e8:.2f} 亿元")
             except (TypeError, ValueError):
-                lines.append(f"- **企业自由现金流（FCF）**：N/A")
+                lines.append("- **企业自由现金流（FCF）**：N/A")
         else:
             lines.append("- **企业自由现金流（FCF）**：N/A")
 
@@ -424,9 +423,12 @@ def capital_flow_tool(packet: CalculatedDataPacket) -> str:
         lines.append("| 日期 | 主力净流入(今日) | 3日累计 | 5日累计 | 10日累计 | 散户净流入 | 北向资金 |")
         lines.append("|-----|--------------|--------|--------|---------|---------|---------|")
         def _f(v):
-            if pd.isna(v) or v == "": return "N/A"
-            try: return f"{float(v):.0f}"
-            except (ValueError, TypeError): return "N/A"
+            if pd.isna(v) or v == "":
+                return "N/A"
+            try:
+                return f"{float(v):.0f}"
+            except (ValueError, TypeError):
+                return "N/A"
 
         for _, row in recent.iterrows():
             d = str(row.get("trade_date", ""))
@@ -577,8 +579,8 @@ def sector_tool(packet: CalculatedDataPacket) -> str:
     # 动量因子
     if mom:
         lines.append("\n### 动量因子")
-        lines.append(f"| 1个月动量 | 3个月动量 | 6个月动量 | 3M跳过1M | 动量评分 |")
-        lines.append(f"|---------|---------|---------|---------|---------|")
+        lines.append("| 1个月动量 | 3个月动量 | 6个月动量 | 3M跳过1M | 动量评分 |")
+        lines.append("|---------|---------|---------|---------|---------|")
 
         def _m(k) -> str:
             v = mom.get(k)
@@ -652,7 +654,7 @@ def snapshot_tool(packet: CalculatedDataPacket) -> str:
     close = last.get("close_adj") or last.get("close", 0)
     pct = last.get("pct_chg", 0) or 0
     sign = "+" if float(pct) >= 0 else ""
-    lines.append(f"### 当前价格")
+    lines.append("### 当前价格")
     lines.append(f"- **最新收盘价**：{float(close):.2f} 元")
     lines.append(f"- **今日涨跌幅**：{sign}{float(pct):.2f}%")
     lines.append(f"- **日期**：{last.get('trade_date', 'N/A')}")

@@ -1,10 +1,9 @@
-from __future__ import annotations
-
 """
 风控计算模块。
 纯代码逻辑，无 LLM 调用。
 按 docs/tools/03_风控计算模块.md 规范实现。
 """
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -330,8 +329,8 @@ def format_risk_results(
     if var_result.error:
         lines.append(f"⚠️ VaR 计算失败：{var_result.error}\n")
     else:
-        lines.append(f"| 指标 | 数值 |")
-        lines.append(f"|-----|------|")
+        lines.append("| 指标 | 数值 |")
+        lines.append("|-----|------|")
         lines.append(f"| 日VaR | {var_result.var_daily_pct:.2f}% |")
         lines.append(f"| {var_result.holding_days}日持有期VaR | {var_result.var_holding_pct:.2f}% |")
         lines.append(f"| VaR金额 | ¥{var_result.var_amount:,.0f} 元 |")
@@ -349,8 +348,8 @@ def format_risk_results(
         lines.append("*本标的非A股，不适用A股风险评分。*\n")
     else:
         lines.append("### 二、A股特有风险评分\n")
-        lines.append(f"| 风险维度 | 分项评分 | 权重 | 加权得分 |")
-        lines.append(f"|---------|---------|-----|---------|")
+        lines.append("| 风险维度 | 分项评分 | 权重 | 加权得分 |")
+        lines.append("|---------|---------|-----|---------|")
         lines.append(f"| 融资融券风险 | {a_share_result.margin_risk_score:.0f} | 40% | {a_share_result.margin_risk_score * 0.4:.1f} |")
         lines.append(f"| T+1制度风险 | {a_share_result.t1_risk_score:.0f} | 25% | {a_share_result.t1_risk_score * 0.25:.1f} |")
         lines.append(f"| 涨跌停流动性风险 | {a_share_result.limit_up_risk_score:.0f} | 20% | {a_share_result.limit_up_risk_score * 0.2:.1f} |")

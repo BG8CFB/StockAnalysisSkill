@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 技能加载器。按 Agent Skills 开放标准 (agentskills.io/specification) 实现渐进式加载。
 
@@ -16,6 +14,7 @@ from __future__ import annotations
   第 2 层 - 指令内容（<5000 tokens）：AI 决定调用时按需加载 SKILL.md body
   第 3 层 - 资源文件（按需）：references/ scripts/ assets/ 中的文件按需加载
 """
+from __future__ import annotations
 
 import logging
 from dataclasses import dataclass

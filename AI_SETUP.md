@@ -13,6 +13,10 @@
 
 ## 🛠️ 执行步骤 (Execution Steps)
 
+### 第零步：验证项目完整性 (Verify Repository Integrity)
+1. **检查当前目录**：在开始安装前，请确认你当前所在的工作目录中包含了 `src/` 文件夹、`scripts/` 文件夹以及 `pyproject.toml` 等核心文件。
+2. **纠错机制 (Critical)**：如果你发现当前目录下只有 `SKILL.md` 和 `AI_SETUP.md`，说明你之前的操作有误！**这是一个完整的服务端项目，不能只复制文档！** 你必须立刻停止操作，使用 `git clone` 将对应的远程仓库完整克隆下来，然后 `cd` 进入那个包含完整源码的目录中，再继续执行第一步。
+
 ### 第一步：环境检查与依赖安装 (Environment & Dependencies)
 1. **检查 Python 版本**：要求 Python 3.10 或更高版本。运行命令检查 `python --version`。
 2. **检查包管理器 `uv`**：项目使用 `uv` 进行依赖管理。运行 `uv --version` 检查是否已安装。

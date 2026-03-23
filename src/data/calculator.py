@@ -71,7 +71,7 @@ def calculate(packet: CleanedDataPacket) -> CalculatedDataPacket:
     )
 
     if packet.is_suspended or packet.price_series is None or packet.price_series.empty:
-        logger.info(f"[指标] 技术指标计算完成（MACD/RSI/KDJ/布林带/均线/VaR）")
+        logger.info("[指标] 技术指标计算完成（MACD/RSI/KDJ/布林带/均线/VaR）")
         return calc
 
     df = packet.price_series
@@ -103,7 +103,7 @@ def calculate(packet: CleanedDataPacket) -> CalculatedDataPacket:
     elif packet.financial_raw:
         calc.financial_indicators = compute_financial_indicators_local(packet.financial_raw)
 
-    logger.info(f"[指标] 技术指标计算完成（MACD/RSI/KDJ/布林带/均线/VaR）")
+    logger.info("[指标] 技术指标计算完成（MACD/RSI/KDJ/布林带/均线/VaR）")
     return calc
 
 

@@ -16,6 +16,7 @@ def test_update_task_merges_stage_progress():
     task = create_task("000001.SZ")
     update_task(task.task_id, stage_progress={"stage1": StageStatus.RUNNING})
     result = get_task(task.task_id)
+    assert result is not None
     assert result.stage_progress["stage1"] == StageStatus.RUNNING
     assert result.stage_progress["stage2"] == StageStatus.PENDING
     assert result.stage_progress["stage3"] == StageStatus.PENDING
@@ -28,6 +29,7 @@ def test_update_task_merges_multiple_stage_updates():
     update_task(task.task_id, stage_progress={"stage1": StageStatus.RUNNING})
     update_task(task.task_id, stage_progress={"stage1": StageStatus.COMPLETED, "stage2": StageStatus.RUNNING})
     result = get_task(task.task_id)
+    assert result is not None
     assert result.stage_progress["stage1"] == StageStatus.COMPLETED
     assert result.stage_progress["stage2"] == StageStatus.RUNNING
     assert result.stage_progress["stage3"] == StageStatus.PENDING
@@ -39,6 +41,7 @@ def test_update_task_sets_completed_at_on_completion():
     update_task(task.task_id, status=TaskStatus.RUNNING)
     update_task(task.task_id, status=TaskStatus.COMPLETED)
     result = get_task(task.task_id)
+    assert result is not None
     assert result.completed_at is not None
 
 
@@ -54,6 +57,7 @@ def test_update_task_sets_completed_at_on_cancellation():
     update_task(task.task_id, status=TaskStatus.RUNNING)
     update_task(task.task_id, status=TaskStatus.CANCELLED)
     result = get_task(task.task_id)
+    assert result is not None
     assert result.completed_at is not None
 
 
@@ -64,6 +68,7 @@ def test_update_task_does_not_overwrite_completed_at():
     # calling update again should not change completed_at
     update_task(task.task_id, status=TaskStatus.COMPLETED)
     result = get_task(task.task_id)
+    assert result is not None
     assert result.completed_at == fixed_time
 
 
@@ -72,6 +77,7 @@ def test_update_task_sets_started_at_on_running():
     assert task.started_at is None
     update_task(task.task_id, status=TaskStatus.RUNNING)
     result = get_task(task.task_id)
+    assert result is not None
     assert result.started_at is not None
 
 
@@ -115,6 +121,7 @@ def test_append_task_log():
     append_task_log(task.task_id, "Stage1 技术分析师 开始")
     append_task_log(task.task_id, "Stage1 技术分析师 完成（1234字）")
     result = get_task(task.task_id)
+    assert result is not None
     assert len(result.logs) == 2
     assert "技术分析师 开始" in result.logs[0]
     assert "技术分析师 完成" in result.logs[1]

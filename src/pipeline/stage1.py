@@ -120,7 +120,7 @@ async def run_stage1(
     for (agent_id, display_name), outcome in zip(analysts, outcomes):
         if isinstance(outcome, asyncio.CancelledError):
             raise outcome
-        elif isinstance(outcome, Exception):
+        elif isinstance(outcome, BaseException):
             msg = f"[Stage1] ✗ {display_name} 失败: {outcome}"
             logger.error(msg)
             append_task_log(task_id, msg)
@@ -131,7 +131,7 @@ async def run_stage1(
             _, text = outcome
             results.reports[agent_id] = text
 
-    all_failed = all(isinstance(o, Exception) for o in outcomes)
+    all_failed = all(isinstance(o, BaseException) for o in outcomes)
     if all_failed:
         raise RuntimeError(f"[Stage1] 全部 {count} 位分析师均失败，Stage1 不可用")
 

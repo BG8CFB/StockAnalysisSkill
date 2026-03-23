@@ -156,7 +156,7 @@ async def run_pipeline(
             else:
                 # 无 Tushare Token：直接使用 AkShare 作为主数据源
                 from src.data.akshare_adapter import fetch_all as akshare_fetch_all
-                logger.info(f"[Pipeline] 未配置 Tushare Token，使用 AkShare 作为主数据源")
+                logger.info("[Pipeline] 未配置 Tushare Token，使用 AkShare 作为主数据源")
                 append_task_log(task_id, "[数据] 未配置 Tushare Token，使用 AkShare 主数据源", stock_code)
                 raw, available = await akshare_fetch_all(stock_code)
             logger.info(f"[Pipeline] 数据拉取完成，可用工具: {available}")

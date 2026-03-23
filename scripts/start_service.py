@@ -13,9 +13,10 @@
     1  启动失败（端口被其他进程占用 / 超时 / 进程意外退出）
 
 标准输出（JSON）：
-    {"status": "running",  "port": 8080, "pid": 12345, "started": false}
-    {"status": "started",  "port": 8080, "pid": 12345, "started": true}
-    {"status": "error",    "port": 8080, "error": "描述"}  → stderr
+# 预期输出格式：
+    # {"status": "running",  "port": 8888, "pid": 12345, "started": false}
+    # {"status": "started",  "port": 8888, "pid": 12345, "started": true}
+    # {"status": "error",    "port": 8888, "error": "描述"}  → stderr
 """
 
 from __future__ import annotations
@@ -64,7 +65,7 @@ def _get_server_config() -> tuple[str, int]:
     """返回 (host, port)，优先读 .env，回退到默认值。"""
     env = _read_env()
     host = env.get("SERVER_HOST", "127.0.0.1")
-    port = int(env.get("SERVER_PORT", "8080"))
+    port = int(env.get("SERVER_PORT", "8888"))
     return host, port
 
 

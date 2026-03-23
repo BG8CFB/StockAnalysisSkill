@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 工具注入器。
 给定智能体名称和数据包，返回该智能体的完整数据上下文字符串（Markdown格式）。
@@ -12,6 +10,7 @@ from __future__ import annotations
   当智能体拥有工具配置、但全部工具均无数据时，返回以 DATA_MISSING_MARKER 开头的字符串。
   调用方（BaseAgent）检测到此标记后将跳过 LLM 调用，直接输出数据缺失通知。
 """
+from __future__ import annotations
 
 from typing import Optional
 

@@ -11,7 +11,7 @@ uv sync
 # Run the service
 uv run python -m src.main
 # or
-uv run uvicorn src.main:app --host 127.0.0.1 --port 8080
+uv run uvicorn src.main:app --host 127.0.0.1 --port 8888
 
 # Run all tests
 uv run pytest

@@ -139,8 +139,9 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
                 # Tushare 返回的 hsgt 字段类型可能是 str，需要转换
                 if "northbound_flow" in df_north.columns:
                     df_north["northbound_flow"] = pd.to_numeric(df_north["northbound_flow"], errors="coerce")
-                if raw.get("capital_flow_raw") is not None and "northbound_flow" in df_north.columns:
-                    raw["capital_flow_raw"] = raw["capital_flow_raw"].merge(
+                cap_flow = raw.get("capital_flow_raw")
+                if cap_flow is not None and "northbound_flow" in df_north.columns:
+                    raw["capital_flow_raw"] = cap_flow.merge(
                         df_north[["trade_date", "northbound_flow"]], on="trade_date", how="left"
                     )
         except Exception as e:
@@ -158,8 +159,9 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
             })
             df_margin = df_margin.sort_values("trade_date").reset_index(drop=True)
             # 计算融资占流通市值比
-            if raw.get("daily_basic") is not None and "circ_mv" in raw["daily_basic"].columns:
-                df_basic_mv = raw["daily_basic"][["trade_date", "circ_mv"]]
+            daily_basic = raw.get("daily_basic")
+            if daily_basic is not None and "circ_mv" in daily_basic.columns:
+                df_basic_mv = daily_basic[["trade_date", "circ_mv"]]
                 df_margin = df_margin.merge(df_basic_mv, on="trade_date", how="left")
                 df_margin["margin_ratio"] = (
                     df_margin["margin_balance"] / (df_margin["circ_mv"] * 10000) * 100
@@ -194,7 +196,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
         df_ann = pro.disclosure(ts_code=stock_code, start_date=_days_ago(60), end_date=end_date)
         if df_ann is not None and not df_ann.empty:
             cols = [c for c in ["ann_date", "title", "url"] if c in df_ann.columns]
-            raw["news_raw"] = df_ann[cols].head(50).to_dict("records")
+            raw["news_raw"] = df_ann[cols].head(50).to_dict(orient="records")
             available.update(["news_tool"])
         else:
             raw["news_raw"] = []
@@ -267,8 +269,8 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
         if df_income is not None and not df_income.empty:
             if "report_type" in df_income.columns:
                 df_income = df_income[df_income["report_type"] == "1"]
-            df_income = df_income.sort_values("end_date", ascending=False).reset_index(drop=True)
-            _financial["income"] = df_income.head(8).to_dict("records")
+            df_income = df_income.sort_values(by="end_date", ascending=False).reset_index(drop=True)
+            _financial["income"] = df_income.head(8).to_dict(orient="records")
     except Exception as e:
         logger.warning(f"[Tushare] 利润表数据拉取失败 {stock_code}: {e}")
 
@@ -281,8 +283,8 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
         if df_cashflow is not None and not df_cashflow.empty:
             if "report_type" in df_cashflow.columns:
                 df_cashflow = df_cashflow[df_cashflow["report_type"] == "1"]
-            df_cashflow = df_cashflow.sort_values("end_date", ascending=False).reset_index(drop=True)
-            _financial["cashflow"] = df_cashflow.head(8).to_dict("records")
+            df_cashflow = df_cashflow.sort_values(by="end_date", ascending=False).reset_index(drop=True)
+            _financial["cashflow"] = df_cashflow.head(8).to_dict(orient="records")
     except Exception as e:
         logger.warning(f"[Tushare] 现金流量表数据拉取失败 {stock_code}: {e}")
 
@@ -296,8 +298,8 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
         if df_bs is not None and not df_bs.empty:
             if "report_type" in df_bs.columns:
                 df_bs = df_bs[df_bs["report_type"] == "1"]
-            df_bs = df_bs.sort_values("end_date", ascending=False).reset_index(drop=True)
-            _financial["balancesheet"] = df_bs.head(8).to_dict("records")
+            df_bs = df_bs.sort_values(by="end_date", ascending=False).reset_index(drop=True)
+            _financial["balancesheet"] = df_bs.head(8).to_dict(orient="records")
     except Exception as e:
         logger.warning(f"[Tushare] 资产负债表数据拉取失败 {stock_code}: {e}")
 
@@ -321,10 +323,12 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
         )
         df_fi = pro.fina_indicator(ts_code=stock_code, fields=_fi_fields)
         if df_fi is not None and not df_fi.empty:
-            df_fi = df_fi.sort_values("end_date", ascending=False).reset_index(drop=True)
-            if raw.get("financial_raw") is None:
-                raw["financial_raw"] = {}
-            raw["financial_raw"]["fina_indicator"] = df_fi.head(8).to_dict("records")
+            df_fi = df_fi.sort_values(by="end_date", ascending=False).reset_index(drop=True)
+            fin_raw = raw.get("financial_raw")
+            if fin_raw is None:
+                fin_raw = {}
+                raw["financial_raw"] = fin_raw
+            fin_raw["fina_indicator"] = df_fi.head(8).to_dict(orient="records")
             available.update(["fundamental_tool"])
     except Exception as e:
         logger.warning(f"[Tushare] 财务指标(fina_indicator)数据拉取失败 {stock_code}: {e}")
@@ -336,8 +340,8 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
             fields="ts_code,end_date,ann_date,record_date,ex_date,cash_div_tax,stk_div"
         )
         if df_div is not None and not df_div.empty:
-            df_div = df_div.sort_values("end_date", ascending=False).reset_index(drop=True)
-            raw["dividend_raw"] = df_div.head(10).to_dict("records")
+            df_div = df_div.sort_values(by="end_date", ascending=False).reset_index(drop=True)
+            raw["dividend_raw"] = df_div.head(10).to_dict(orient="records")
         else:
             raw["dividend_raw"] = []
     except Exception as e:

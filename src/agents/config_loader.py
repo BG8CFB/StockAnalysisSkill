@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 智能体配置加载器。
 
@@ -21,6 +19,7 @@ from __future__ import annotations
   tools:         该智能体使用的内置工具列表（见 config/tools.yaml）
   use_skills:    是否向该智能体注入 skills/ 目录中的外置技能（true/false）
 """
+from __future__ import annotations
 
 import logging
 from pathlib import Path

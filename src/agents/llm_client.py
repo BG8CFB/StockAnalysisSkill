@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Callable, Optional, Union
+from typing import Any, Callable, Coroutine, Optional, Union
 
 import openai
 from openai import AsyncOpenAI
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 _MAX_TOOL_TURNS = 10
 
 # tool_executor 类型：同步或异步，接受 (tool_name, arguments) → str
-ToolExecutor = Callable[[str, str], Union[str, "asyncio.coroutines"]]
+ToolExecutor = Callable[[str, str], Union[str, Coroutine[Any, Any, str]]]
 
 
 class LLMClient:
