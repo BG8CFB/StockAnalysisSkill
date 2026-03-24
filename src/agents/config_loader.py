@@ -151,6 +151,51 @@ def get_all_configs() -> dict[str, AgentConfig]:
     return dict(_all_configs)
 
 
+class _AgentConfigsProxy(dict):
+    """代理类，使得 AGENT_CONFIGS 可以在访问时自动触发加载。"""
+
+    def __getitem__(self, key: str) -> AgentConfig:
+        return get_agent_config(key)
+
+    def __iter__(self):
+        _load_all()
+        return iter(_all_configs)
+
+    def __len__(self) -> int:
+        _load_all()
+        return len(_all_configs)
+
+    def keys(self):
+        _load_all()
+        return _all_configs.keys()
+
+    def values(self):
+        _load_all()
+        return _all_configs.values()
+
+    def items(self):
+        _load_all()
+        return _all_configs.items()
+
+    def __contains__(self, key: object) -> bool:
+        _load_all()
+        return key in _all_configs
+
+    def __repr__(self) -> str:
+        _load_all()
+        return repr(_all_configs)
+
+    def get(self, key: str, default=None):
+        try:
+            return self.__getitem__(key)
+        except Exception:
+            return default
+
+
+# 向后兼容：AGENT_CONFIGS 代理对象
+AGENT_CONFIGS: dict[str, AgentConfig] = _AgentConfigsProxy()  # type: ignore[assignment]
+
+
 def get_global_rules() -> str:
     """返回全局规则提示词（从 config/global.yaml 加载，缓存）。"""
     global _global_rules, _global_rules_loaded

@@ -6,7 +6,7 @@ import time
 from loguru import logger
 
 from src.agents.llm_client import LLMClient
-from src.core.models import TaskStatus, StageStatus
+from src.core.models import TaskStatus, StageStatus, PipelineConfig
 from src.core.task_store import (
     update_task, append_task_log, get_task,
     load_agent_output,
@@ -123,6 +123,13 @@ async def run_pipeline(
             stages_completed = set(task_record.stages_completed if task_record else [])
             is_resuming = bool(stages_completed)
 
+            # 获取流水线配置
+            pipeline_config = task_record.pipeline_config if task_record else PipelineConfig()
+            # 配置合并后应该已有确定值，但为兼容历史任务需处理 None 情况
+            effective_stage2_enabled = pipeline_config.stage2_enabled if pipeline_config.stage2_enabled is not None else settings.pipeline_stage2_enabled
+            effective_stage3_enabled = pipeline_config.get_effective_stage3_enabled(settings.pipeline_stage3_enabled)
+            effective_debate_rounds = pipeline_config.get_effective_debate_rounds(settings.debate_rounds)
+
             if is_resuming:
                 new_resume_count = (task_record.resume_count + 1) if task_record else 1
                 update_task(
@@ -165,6 +172,20 @@ async def run_pipeline(
                 logger.info("[Pipeline] 未配置 Tushare Token，使用 AkShare 作为主数据源")
                 append_task_log(task_id, "[数据] 未配置 Tushare Token，使用 AkShare 主数据源", stock_code)
                 raw, available = await akshare_fetch_all(stock_code)
+
+            # ── 宏观数据获取（AKShare）──────────────────────────────────────────
+            from src.data.macro_adapter import fetch_macro_data
+            try:
+                macro_raw, macro_available = await fetch_macro_data(stock_code)
+                if macro_raw:
+                    raw["macro_data"] = macro_raw
+                available.update(macro_available)
+                logger.info(f"[Pipeline] 宏观数据获取完成，可用宏观工具: {macro_available}")
+                append_task_log(task_id, f"[数据] 宏观数据获取完成，可用工具: {len(macro_available)} 个", stock_code)
+            except Exception as e:
+                logger.warning(f"[Pipeline] 宏观数据获取失败: {e}")
+                append_task_log(task_id, f"[数据] ⚠ 宏观数据获取失败: {e}", stock_code)
+
             logger.info(f"[Pipeline] 数据拉取完成，可用工具: {available}")
             append_task_log(task_id, f"[数据] 数据拉取完成，可用工具: {len(available)} 个", stock_code)
 
@@ -218,7 +239,7 @@ async def run_pipeline(
                     packet=packet,
                     available_tools=packet.available_tools,
                     market_rules=market_rules,
-
+                    stage1_agents=pipeline_config.stage1_agents,
                     llm_client=llm_client,
                     task_semaphore=task_semaphore,
                     cancel_event=cancel_event,
@@ -234,7 +255,23 @@ async def run_pipeline(
             if cancel_event.is_set():
                 raise asyncio.CancelledError
 
-            if "stage2" in stages_completed:
+            if not effective_stage2_enabled:
+                # Stage 2 被禁用，生成空结果
+                from src.pipeline.stage2 import Stage2Results
+                stage2_results = Stage2Results(
+                    bull_rounds=[],
+                    bear_rounds=[],
+                    director_report="（Stage 2 多空辩论已禁用）",
+                    trading_plan="（Stage 2 已禁用，无交易计划）",
+                )
+                logger.info("[Pipeline] Stage 2 已禁用，跳过")
+                append_task_log(task_id, "[Pipeline] Stage 2 已禁用，跳过", stock_code)
+                update_task(
+                    task_id, stock_code,
+                    current_stage="stage3",
+                    stage_progress={"stage2": StageStatus.SKIPPED, "stage3": StageStatus.RUNNING},
+                )
+            elif "stage2" in stages_completed:
                 logger.info("[Pipeline] 断点续跑：Stage2 已完成，从磁盘加载")
                 append_task_log(task_id, "[Stage2] 断点恢复：已完成，从磁盘加载", stock_code)
                 stage2_results = _load_stage2_from_disk(task_id, stock_code)
@@ -253,11 +290,10 @@ async def run_pipeline(
                     packet=packet,
                     available_tools=packet.available_tools,
                     market_rules=market_rules,
-
                     llm_client=llm_client,
                     task_semaphore=task_semaphore,
                     cancel_event=cancel_event,
-                    debate_rounds=settings.debate_rounds,
+                    debate_rounds=effective_debate_rounds,
                 )
                 update_task(
                     task_id, stock_code,
@@ -270,7 +306,30 @@ async def run_pipeline(
             if cancel_event.is_set():
                 raise asyncio.CancelledError
 
-            if "stage3" in stages_completed:
+            if not effective_stage3_enabled:
+                # Stage 3 被禁用（或 Stage 2 被禁用导致强制禁用），生成空结果
+                from src.pipeline.stage3 import Stage3Results
+                from src.tools.risk_calculator import calculate_var, calculate_a_share_risk
+                var_result = calculate_var(packet, settings.analysis_capital_base)
+                a_share_result = None
+                if stock_code.upper().endswith((".SZ", ".SH")):
+                    a_share_result = calculate_a_share_risk(packet)
+                stage3_result = Stage3Results(
+                    aggressive="（Stage 3 风控已禁用）",
+                    conservative="（Stage 3 风控已禁用）",
+                    quant="（Stage 3 风控已禁用）",
+                    cro_report="（Stage 3 风控已禁用，无 CRO 报告）",
+                    var_result=var_result,
+                    a_share_result=a_share_result,
+                )
+                logger.info("[Pipeline] Stage 3 已禁用，跳过")
+                append_task_log(task_id, "[Pipeline] Stage 3 已禁用，跳过", stock_code)
+                update_task(
+                    task_id, stock_code,
+                    current_stage="stage4",
+                    stage_progress={"stage3": StageStatus.SKIPPED, "stage4": StageStatus.RUNNING},
+                )
+            elif "stage3" in stages_completed:
                 logger.info("[Pipeline] 断点续跑：Stage3 已完成，从磁盘加载")
                 append_task_log(task_id, "[Stage3] 断点恢复：已完成，从磁盘加载", stock_code)
                 stage3_result = _load_stage3_from_disk(task_id, stock_code, packet)
@@ -288,14 +347,13 @@ async def run_pipeline(
                     packet=packet,
                     stock_code=stock_code,
                     market_rules=market_rules,
-
                     llm_client=llm_client,
                     task_semaphore=task_semaphore,
                     cancel_event=cancel_event,
                 )
 
-            # Stage 3 停牌结果（二次检测）
-            if isinstance(stage3_result, SuspendedResult):
+            # Stage 3 停牌结果（仅当 Stage 3 实际执行时才检测）
+            if effective_stage3_enabled and isinstance(stage3_result, SuspendedResult):
                 logger.info("[Pipeline] Stage3 检测到停牌，生成停牌报告")
                 append_task_log(task_id, "[Pipeline] ⚠ Stage3 检测到停牌，生成停牌报告", stock_code)
                 report_path = await write_suspended_report(stock_code, task_id, stage3_result.reason)
@@ -305,7 +363,7 @@ async def run_pipeline(
                     current_stage=None,
                     stage_progress={
                         "stage1": StageStatus.COMPLETED,
-                        "stage2": StageStatus.COMPLETED,
+                        "stage2": StageStatus.COMPLETED if effective_stage2_enabled else StageStatus.SKIPPED,
                         "stage3": StageStatus.SKIPPED,
                         "stage4": StageStatus.SKIPPED,
                     },
@@ -313,7 +371,7 @@ async def run_pipeline(
                 )
                 return
 
-            if "stage3" not in stages_completed:
+            if effective_stage3_enabled and "stage3" not in stages_completed:
                 update_task(
                     task_id, stock_code,
                     current_stage="stage4",

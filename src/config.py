@@ -45,6 +45,16 @@ class Settings(BaseSettings):
     analysis_capital_base: int = 100000
     debate_rounds: int = 2
 
+    # 流水线阶段配置（可被 API 参数覆盖）
+    # Stage 1: 启用的分析师列表，逗号分隔，空表示使用配置文件中所有
+    pipeline_stage1_agents: str = ""
+    # Stage 2: 多空辩论启用开关
+    pipeline_stage2_enabled: bool = True
+    # Stage 2: 辩论轮数（0-3，0表示使用 debate_rounds）
+    pipeline_stage2_debate_rounds: int = 0
+    # Stage 3: 风控流程启用开关（依赖 Stage 2，若 Stage 2 关闭则强制关闭）
+    pipeline_stage3_enabled: bool = True
+
     # 日志
     log_dir: Path = Path("./logs")
     log_level: str = "INFO"
@@ -55,6 +65,20 @@ class Settings(BaseSettings):
     @property
     def max_concurrent_tasks(self) -> int:
         return self.model_api_max_concurrency // self.task_max_model_concurrency
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def stage1_agents_list(self) -> list[str]:
+        """将逗号分隔的字符串解析为智能体ID列表，空字符串返回空列表。"""
+        if not self.pipeline_stage1_agents:
+            return []
+        return [aid.strip() for aid in self.pipeline_stage1_agents.split(",") if aid.strip()]
+
+    def get_effective_debate_rounds(self) -> int:
+        """获取实际生效的辩论轮数。"""
+        if self.pipeline_stage2_debate_rounds > 0:
+            return self.pipeline_stage2_debate_rounds
+        return self.debate_rounds
 
 
 settings = Settings()

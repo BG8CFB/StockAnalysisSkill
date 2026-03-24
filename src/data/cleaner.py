@@ -29,6 +29,7 @@ class CleanedDataPacket:
     anomalies: list[dict] = field(default_factory=list)
     missing_fields: list[str] = field(default_factory=list)
     available_tools: set[str] = field(default_factory=set)
+    macro_data: dict = field(default_factory=dict)  # 宏观数据
 
 
 def clean(raw: dict, available_tools: set[str]) -> CleanedDataPacket:
@@ -67,6 +68,7 @@ def clean(raw: dict, available_tools: set[str]) -> CleanedDataPacket:
             dividend_raw=[],
             missing_fields=["all_fields_unavailable_due_to_suspension"],
             available_tools=set(),
+            macro_data=raw.get("macro_data", {}),
         )
         logger.info(f"[清洗] {stock_code} 数据清洗完成（停牌={result.is_suspended}，可用工具={len(result.available_tools)}个）")
         return result
@@ -119,6 +121,7 @@ def clean(raw: dict, available_tools: set[str]) -> CleanedDataPacket:
         anomalies=anomalies,
         missing_fields=missing_fields,
         available_tools=available_tools,
+        macro_data=raw.get("macro_data", {}),
     )
     logger.info(f"[清洗] {stock_code} 数据清洗完成（停牌={result.is_suspended}，可用工具={len(result.available_tools)}个）")
     return result

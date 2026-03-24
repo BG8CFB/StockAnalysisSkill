@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from src.config import settings
-from src.core.models import StageStatus, TaskRecord, TaskStatus, generate_task_id
+from src.core.models import PipelineConfig, StageStatus, TaskRecord, TaskStatus, generate_task_id
 
 
 # --------------------------------------------------------------------------- #
@@ -65,7 +65,7 @@ def _write_atomic(path: Path, data: dict) -> None:
 # 任务 CRUD                                                                     #
 # --------------------------------------------------------------------------- #
 
-def create_task(stock_code: str, note: Optional[str] = None) -> TaskRecord:
+def create_task(stock_code: str, note: Optional[str] = None, pipeline_config: Optional[PipelineConfig] = None) -> TaskRecord:
     task_id = generate_task_id()
     folder = task_folder(task_id, stock_code)
     folder.mkdir(parents=True, exist_ok=True)
@@ -81,6 +81,7 @@ def create_task(stock_code: str, note: Optional[str] = None) -> TaskRecord:
         },
         created_at=datetime.now(),
         note=note,
+        pipeline_config=pipeline_config if pipeline_config else PipelineConfig(),
     )
     _write_atomic(folder / "task.json", record.model_dump())
     return record

@@ -18,18 +18,29 @@ from typing import Optional
 from src.data.calculator import CalculatedDataPacket
 from src.agents.config_loader import get_agent_config
 from src.tools.data_tools import (
-    price_tool,
-    indicator_tool,
+    # 整合后的新工具（推荐）
+    market_data_tool,
     fundamental_tool,
-    capital_flow_tool,
-    margin_tool,
-    dragon_tiger_tool,
+    microstructure_tool,
+    macro_tool,
+    # 情绪与资讯工具（保持独立）
     sentiment_tool,
     sector_tool,
     news_tool,
+    # 风险工具
+    risk_metric_tool,
+    # 向后兼容的旧工具别名
+    price_tool,
+    indicator_tool,
     snapshot_tool,
     shareholder_tool,
-    risk_metric_tool,
+    capital_flow_tool,
+    margin_tool,
+    dragon_tiger_tool,
+    macro_china_tool,
+    macro_interest_tool,
+    macro_fx_tool,
+    macro_market_tool,
 )
 
 _NA_PLACEHOLDER = "[{tool}未激活：{reason}，本维度数据不可用，分析时请标注N/A]"
@@ -40,18 +51,31 @@ DATA_MISSING_MARKER = "###ALL_TOOLS_UNAVAILABLE###\n"
 
 # 工具名 → 对应函数（除 risk_metric_tool 外都接受 packet 参数）
 _TOOL_FUNCTIONS = {
-    "price_tool": price_tool,
-    "indicator_tool": indicator_tool,
-    "fundamental_tool": fundamental_tool,
-    "capital_flow_tool": capital_flow_tool,
-    "margin_tool": margin_tool,
-    "dragon_tiger_tool": dragon_tiger_tool,
+    # ========== 整合后的新工具（按业务域划分）==========
+    "market_data_tool": market_data_tool,      # price + indicator + snapshot
+    "fundamental_tool": fundamental_tool,      # 财务数据 + 股东结构
+    "microstructure_tool": microstructure_tool,  # 资金流向 + 融资融券 + 龙虎榜
+    "macro_tool": macro_tool,                  # 中国宏观 + 利率 + 汇率 + 市场宏观
+
+    # ========== 独立工具 ==========
     "sentiment_tool": sentiment_tool,
     "sector_tool": sector_tool,
     "news_tool": news_tool,
+    "risk_metric_tool": risk_metric_tool,
+
+    # ========== 向后兼容的旧工具别名 ==========
+    "price_tool": price_tool,
+    "indicator_tool": indicator_tool,
     "snapshot_tool": snapshot_tool,
     "shareholder_tool": shareholder_tool,
-    # risk_metric_tool 单独处理（入参不同）
+    "capital_flow_tool": capital_flow_tool,
+    "margin_tool": margin_tool,
+    "dragon_tiger_tool": dragon_tiger_tool,
+    "macro_china_tool": macro_china_tool,
+    "macro_interest_tool": macro_interest_tool,
+    "macro_fx_tool": macro_fx_tool,
+    "macro_market_tool": macro_market_tool,
+    # macro_global_tool 已删除（纯占位符，需外部API）
 }
 
 

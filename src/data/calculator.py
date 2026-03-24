@@ -46,6 +46,8 @@ class CalculatedDataPacket:
     value: dict = field(default_factory=dict)
     volatility: dict = field(default_factory=dict)
     capital_flow: dict = field(default_factory=dict)
+    # 宏观数据
+    macro_data: dict = field(default_factory=dict)
 
 
 def calculate(packet: CleanedDataPacket) -> CalculatedDataPacket:
@@ -68,6 +70,7 @@ def calculate(packet: CleanedDataPacket) -> CalculatedDataPacket:
         anomalies=packet.anomalies,
         missing_fields=list(packet.missing_fields),
         available_tools=set(packet.available_tools),
+        macro_data=packet.macro_data,
     )
 
     if packet.is_suspended or packet.price_series is None or packet.price_series.empty:

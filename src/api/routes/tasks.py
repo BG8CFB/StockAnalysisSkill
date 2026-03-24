@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, field_validator
 
-from src.core.models import TaskRecord, TaskStatus, StageStatus
+from src.core.models import TaskRecord, TaskStatus, StageStatus, PipelineConfig
 from src.core.task_queue import QueueFullError
 from src.core.task_store import (
     create_task, get_task, list_tasks, update_task,
@@ -36,11 +36,44 @@ _CODE_PATTERN = re.compile(
 _DELETE_WAIT_TIMEOUT = 5.0
 
 
+# ── 配置合并（优先级：API 参数 > 环境变量 > 默认值）─────────────────────────────
+
+def _merge_pipeline_config(api_config: Optional[PipelineConfig]) -> PipelineConfig:
+    """
+    合并流水线配置：API 参数 > 环境变量 > 配置默认值。
+    """
+    # 从环境变量/配置读取默认值
+    env_stage1 = settings.stage1_agents_list
+    env_stage2_enabled = settings.pipeline_stage2_enabled
+    env_stage2_rounds = settings.pipeline_stage2_debate_rounds
+    env_stage3_enabled = settings.pipeline_stage3_enabled
+
+    if api_config is None:
+        # 无 API 参数，使用环境变量/配置
+        return PipelineConfig(
+            stage1_agents=env_stage1,
+            stage2_enabled=env_stage2_enabled,
+            stage2_debate_rounds=env_stage2_rounds,
+            stage3_enabled=env_stage3_enabled,
+        )
+
+    # API 参数覆盖环境变量（None 表示未传入，使用环境变量）
+    merged = PipelineConfig(
+        stage1_agents=api_config.stage1_agents if api_config.stage1_agents else env_stage1,
+        stage2_enabled=api_config.stage2_enabled if api_config.stage2_enabled is not None else env_stage2_enabled,
+        stage2_debate_rounds=api_config.stage2_debate_rounds if api_config.stage2_debate_rounds > 0 else env_stage2_rounds,
+        stage3_enabled=api_config.stage3_enabled if api_config.stage3_enabled is not None else env_stage3_enabled,
+    )
+
+    return merged
+
+
 # ── 请求/响应模型 ─────────────────────────────────────────────────────────────
 
 class CreateTaskRequest(BaseModel):
     stock_code: str
     note: Optional[str] = None
+    pipeline_config: Optional[PipelineConfig] = None
 
     @field_validator("stock_code")
     @classmethod
@@ -61,6 +94,8 @@ class CreateTaskResponse(BaseModel):
     queue_position: int
     created_at: datetime
     is_existing: bool = False
+    effective_config: PipelineConfig
+    message: str = ""
 
 
 class TaskResponse(BaseModel):
@@ -127,6 +162,14 @@ async def create_task_endpoint(request: Request, body: CreateTaskRequest):
             f"[API] 发现重复任务，{body.stock_code} 已有进行中任务 "
             f"{existing.task_id}，直接返回"
         )
+        # 构建生效配置说明
+        cfg = existing.pipeline_config
+        effective_cfg_desc = (
+            f"Stage1: {cfg.stage1_agents if cfg.stage1_agents else '全部'}, "
+            f"Stage2: {'开启' if cfg.stage2_enabled else '关闭'}, "
+            f"辩论轮数: {cfg.get_effective_debate_rounds(settings.debate_rounds)}, "
+            f"Stage3: {'开启' if cfg.get_effective_stage3_enabled() else '关闭'}"
+        )
         response = CreateTaskResponse(
             task_id=existing.task_id,
             status=existing.status,
@@ -134,11 +177,16 @@ async def create_task_endpoint(request: Request, body: CreateTaskRequest):
             queue_position=0,
             created_at=existing.created_at,
             is_existing=True,
+            effective_config=existing.pipeline_config,
+            message=f"任务已存在，{effective_cfg_desc}",
         )
         return JSONResponse(status_code=200, content=response.model_dump(mode="json"))
 
+    # 合并配置（API 参数 > 环境变量 > 默认值）
+    effective_config = _merge_pipeline_config(body.pipeline_config)
+
     task_queue = request.app.state.task_queue
-    task = create_task(body.stock_code, body.note)
+    task = create_task(body.stock_code, body.note, effective_config)
 
     try:
         queue_pos = await task_queue.enqueue(task.task_id)
@@ -153,7 +201,15 @@ async def create_task_endpoint(request: Request, body: CreateTaskRequest):
             ),
         )
 
-    logger.info(f"[API] 任务创建成功，task_id: {task.task_id}，队列位置: {queue_pos}")
+    # 构建配置说明
+    cfg = effective_config
+    effective_cfg_desc = (
+        f"Stage1: {cfg.stage1_agents if cfg.stage1_agents else '全部'}, "
+        f"Stage2: {'开启' if cfg.stage2_enabled else '关闭'}, "
+        f"辩论轮数: {cfg.get_effective_debate_rounds(settings.debate_rounds)}, "
+        f"Stage3: {'开启' if cfg.get_effective_stage3_enabled() else '关闭'}"
+    )
+    logger.info(f"[API] 任务创建成功，task_id: {task.task_id}，队列位置: {queue_pos}，配置: {effective_cfg_desc}")
     response = CreateTaskResponse(
         task_id=task.task_id,
         status=task.status,
@@ -161,6 +217,8 @@ async def create_task_endpoint(request: Request, body: CreateTaskRequest):
         queue_position=queue_pos,
         created_at=task.created_at,
         is_existing=False,
+        effective_config=effective_config,
+        message=f"任务创建成功，{effective_cfg_desc}",
     )
     return JSONResponse(status_code=201, content=response.model_dump(mode="json"))
 

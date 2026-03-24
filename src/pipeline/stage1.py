@@ -63,6 +63,7 @@ async def run_stage1(
     packet: CalculatedDataPacket,
     available_tools: set[str],
     market_rules: str,
+    stage1_agents: list[str],
     llm_client: LLMClient,
     task_semaphore: asyncio.Semaphore,
     cancel_event: asyncio.Event,
@@ -73,10 +74,20 @@ async def run_stage1(
     智能体列表从 config/agents/stage1.yaml 动态加载，用户可在该文件的 agents 列表中
     增删条目来添加或移除分析师，无需修改代码。
 
+    参数 stage1_agents 可用于进一步过滤，只运行指定的智能体（空列表表示运行全部）。
+
     任何一个分析师失败不影响其他分析师（return_exceptions=True）。
     全部失败时抛出 RuntimeError 终止 Stage 1。
     """
     analysts = get_stage1_agents()   # [(agent_id, display_name), ...]
+
+    # 如果指定了 stage1_agents，则过滤只运行指定的智能体
+    if stage1_agents:
+        enabled_set = set(stage1_agents)
+        analysts = [(aid, dname) for aid, dname in analysts if aid in enabled_set]
+        logger.info(f"[Stage1] 根据配置过滤，将运行 {len(analysts)} 个分析师: {[aid for aid, _ in analysts]}")
+        append_task_log(task_id, f"[Stage1] 根据配置过滤，将运行 {len(analysts)} 个分析师")
+
     count = len(analysts)
 
     logger.info(f"[Stage1] 启动 {count} 个分析师并行分析，股票: {stock_code}")

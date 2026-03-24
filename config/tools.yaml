@@ -8,8 +8,94 @@
 # 将工具分配给智能体：在对应 config/agents/ YAML 的 tools 列表中添加工具名即可。
 # 任何工具均可分配给任何智能体，无硬性限制。
 # ============================================================
+#
+# 【重要】工具架构重构说明（2025-03）:
+# 工具按数据域划分，每个整合工具内部处理多数据源回退（Tushare → AkShare）。
+# 不要创建 TU/AK 分离的工具。
+#
+# 整合后工具（推荐）：
+# - market_data_tool: 行情数据整合（原 price_tool + indicator_tool + snapshot_tool）
+# - fundamental_tool: 基本面整合（财务数据 + 股东结构）
+# - microstructure_tool: 微观结构整合（原 capital_flow_tool + margin_tool + dragon_tiger_tool）
+# - macro_tool: 宏观数据整合（原 macro_china_tool + macro_interest_tool + macro_fx_tool + macro_market_tool）
+# 删除工具：macro_global_tool（纯占位符，需外部API）
+#
+# 向后兼容：所有旧工具名仍可作为别名使用，但实际调用整合工具。
+# ============================================================
 
-price_tool:
+# ========== 整合后的新工具（按业务域划分，推荐）==========
+
+market_data_tool:
+  display_name: 行情数据工具（整合）
+  description: >
+    整合原 price_tool + indicator_tool + snapshot_tool。
+    提供个股历史K线序列、技术指标计算结果和最新行情快照。
+    数据源自 Tushare（主）→ AkShare（备）自动回退。
+  data_fields:
+    - 日线 OHLCV（开/高/低/收/量），最近 N 交易日，含前复权价格
+    - 技术指标：MACD（DIF/DEA/柱状值）、RSI（6/12/24日）、KDJ（K/D/J）、布林带（上轨/中轨/下轨）、均线（MA5/10/20/60）
+    - 最新行情快照：最新价/涨跌幅/市值/52周高低点/换手率/市盈率
+  typical_agents:
+    - technical_analyst
+  notes: >
+    新整合工具（推荐）。向后兼容的 price_tool、indicator_tool、snapshot_tool 实际调用此工具。
+
+fundamental_tool:
+  display_name: 基本面工具（整合）
+  description: >
+    整合财务数据与股东结构数据。
+    提供公司全套财务数据、估值指标和股东结构分析。
+    数据优先来自 Tushare fina_indicator 接口，不可用时自动降级为原始三表本地计算。
+  data_fields:
+    - 估值：PE（TTM）、PB（MRQ）、PS（TTM）、股息率、市值
+    - 盈利：ROE、ROA、毛利率、净利率
+    - 成长：营收同比增速、净利润同比增速
+    - 偿债：资产负债率、流动比率、速动比率
+    - 现金流：经营现金流含金量（OCF/净利润）、企业自由现金流（FCF）、EBITDA
+    - 三表摘要：资产负债/利润/现金流量表明细
+    - 分红历史：近5次每股现金分红、送股比例
+    - 股东结构：股东人数趋势（筹码集中度）、股权质押情况、近期回购记录
+  typical_agents:
+    - fundamental_analyst
+  notes: >
+    已整合原 shareholder_tool 功能。向后兼容的 shareholder_tool 实际调用此工具。
+
+microstructure_tool:
+  display_name: 市场微观结构工具（整合）
+  description: >
+    整合原 capital_flow_tool + margin_tool + dragon_tiger_tool。
+    提供主力资金流向、融资融券数据和龙虎榜记录。
+    是判断主力意图（吸筹/出货/洗盘）的关键依据。
+  data_fields:
+    - 主力大单：超大单/大单净流入额、多日累计流向、主力占比
+    - 散户行为：小单/中单净流入（反向指标）
+    - 融资融券：融资余额、融券余额、融资占流通市值比、5日变化率
+    - 龙虎榜：上榜记录、席位性质识别（机构/游资）、净买入量
+  typical_agents:
+    - microstructure_analyst
+  notes: >
+    新整合工具（推荐）。向后兼容的 capital_flow_tool、margin_tool、dragon_tiger_tool 实际调用此工具。
+
+macro_tool:
+  display_name: 宏观数据工具（整合）
+  description: >
+    整合原 macro_china_tool + macro_interest_tool + macro_fx_tool + macro_market_tool。
+    提供中国宏观经济、利率政策、汇率数据和市场层面宏观指标。
+    数据来源于 AKShare（国家统计局/央行/外汇交易中心）。
+  data_fields:
+    - 中国宏观经济：GDP、CPI、PPI、PMI、M2、社融
+    - 利率数据：LPR（1年/5年）、美联储利率、SHIBOR
+    - 汇率数据：美元兑人民币（在岸）
+    - 市场宏观：北向资金流向、全市场融资余额、沪深300估值（PE/PB）
+  typical_agents:
+    - macro_analyst
+  notes: >
+    新整合工具（推荐）。向后兼容的 macro_china_tool、macro_interest_tool、macro_fx_tool、macro_market_tool 实际调用此工具。
+    原 macro_global_tool 已删除（油价/美债/VIX等需要外部API，当前为占位符）。
+
+# ========== 独立工具（保持独立）==========
+
+sentiment_tool:
   display_name: 价格工具
   description: >
     提供个股历史 K 线序列（日线 OHLCV），含前复权价格。
@@ -156,48 +242,12 @@ news_tool:
     新闻数据时效性强，建议关注 3 个交易日内的资讯，超过 10 个交易日的资讯参考价值有限。
     研报评级变动需关注机构名气，知名机构评级上调往往带来短期跟风效应。
 
-snapshot_tool:
-  display_name: 行情快照工具
-  description: >
-    提供当前（或最近收盘）行情快照，是交易计划制定和报告头部概览的基础数据。
-  data_fields:
-    - 最新价 / 涨跌幅 / 涨跌额
-    - 今日开盘价 / 最高价 / 最低价 / 收盘价
-    - 成交量 / 成交额
-    - 总市值 / 流通市值
-    - 52周最高价 / 最低价
-    - 市盈率（实时）
-  typical_agents:
-    - fundamental_analyst   # 辅助估值
-    - trading_planner       # 制定具体价格参数
-    - investment_advisor    # 报告头部行情概览
-  notes: >
-    交易计划师必须使用此工具，以便基于真实最新价位计算入场价/止损/止盈的绝对数值。
-
-shareholder_tool:
-  display_name: 股东结构工具
-  description: >
-    提供股东人数趋势（筹码集中度信号）、股权质押情况、近期回购记录。
-    股东人数连续减少通常是机构建仓、筹码集中的看多信号；
-    质押比例过高（>30%）存在强平风险，是重要风险指标。
-  data_fields:
-    - 股东人数趋势（最近 8 期，单位：户，含较上期变化%）
-    - 股权质押比例（%）、质押笔数、限售/非限售质押股数
-    - 质押比例历史趋势（近4期）
-    - 近期回购记录（公告日 / 状态 / 成交量 / 金额）
-  typical_agents:
-    - fundamental_analyst
-    - microstructure_analyst
-  notes: >
-    仅适用于 A 股（.SZ/.SH），港股/美股返回 N/A 占位符。
-    股东人数数据随季报披露，存在 1-2 个月滞后。
-
 risk_metric_tool:
   display_name: 风险指标工具
   description: >
     提供由 src/tools/risk_calculator.py 纯代码计算的量化风险指标。
     此工具的数据不来自外部 API，而是基于历史价格序列在流水线内计算，
-    因此只要 price_tool 有数据，此工具通常可用。
+    因此只要有价格数据，此工具通常可用。
   data_fields:
     - VaR（95%置信度，1日/5日/20日持有期）
     - VaR 金额（基于 analysis_capital_base 配置）
@@ -217,4 +267,103 @@ risk_metric_tool:
   notes: >
     risk_metric_tool 的入参特殊，由 tool_injector 通过 risk_results 参数传入，
     而非直接读取 CalculatedDataPacket。
-    港股/美股不计算 A 股特有风险分，composite_score 和 recommendation 不可用。
+    港股/美股不计算 A 股特有风险分。
+
+# ============================================================
+# 向后兼容的旧工具别名（不推荐新代码使用）
+# ============================================================
+# 以下工具仍可作为别名使用，但实际调用对应整合工具。
+# 新代码请直接使用上方整合工具。
+
+price_tool:
+  display_name: 价格工具（向后兼容）
+  description: >
+    【向后兼容】原价格工具，现实际调用 market_data_tool。
+    请新代码直接使用 market_data_tool。
+  notes: >
+    向后兼容别名，实际调用 market_data_tool。
+
+indicator_tool:
+  display_name: 技术指标工具（向后兼容）
+  description: >
+    【向后兼容】原技术指标工具，现实际调用 market_data_tool。
+    请新代码直接使用 market_data_tool。
+  notes: >
+    向后兼容别名，实际调用 market_data_tool。
+
+snapshot_tool:
+  display_name: 行情快照工具（向后兼容）
+  description: >
+    【向后兼容】原行情快照工具，现实际调用 market_data_tool。
+    请新代码直接使用 market_data_tool。
+  notes: >
+    向后兼容别名，实际调用 market_data_tool。
+
+capital_flow_tool:
+  display_name: 资金流向工具（向后兼容）
+  description: >
+    【向后兼容】原资金流向工具，现实际调用 microstructure_tool。
+    请新代码直接使用 microstructure_tool。
+  notes: >
+    向后兼容别名，实际调用 microstructure_tool。
+
+margin_tool:
+  display_name: 融资融券工具（向后兼容）
+  description: >
+    【向后兼容】原融资融券工具，现实际调用 microstructure_tool。
+    请新代码直接使用 microstructure_tool。
+  notes: >
+    向后兼容别名，实际调用 microstructure_tool。
+
+dragon_tiger_tool:
+  display_name: 龙虎榜工具（向后兼容）
+  description: >
+    【向后兼容】原龙虎榜工具，现实际调用 microstructure_tool。
+    请新代码直接使用 microstructure_tool。
+  notes: >
+    向后兼容别名，实际调用 microstructure_tool。
+
+shareholder_tool:
+  display_name: 股东结构工具（向后兼容）
+  description: >
+    【向后兼容】原股东结构工具，现实际调用 fundamental_tool。
+    请新代码直接使用 fundamental_tool。
+  notes: >
+    向后兼容别名，实际调用 fundamental_tool。
+
+macro_china_tool:
+  display_name: 中国宏观经济工具（向后兼容）
+  description: >
+    【向后兼容】原中国宏观经济工具，现实际调用 macro_tool。
+    请新代码直接使用 macro_tool。
+  notes: >
+    向后兼容别名，实际调用 macro_tool。
+
+macro_interest_tool:
+  display_name: 利率与货币政策工具（向后兼容）
+  description: >
+    【向后兼容】原利率与货币政策工具，现实际调用 macro_tool。
+    请新代码直接使用 macro_tool。
+  notes: >
+    向后兼容别名，实际调用 macro_tool。
+
+macro_fx_tool:
+  display_name: 汇率工具（向后兼容）
+  description: >
+    【向后兼容】原汇率工具，现实际调用 macro_tool。
+    请新代码直接使用 macro_tool。
+  notes: >
+    向后兼容别名，实际调用 macro_tool。
+
+macro_market_tool:
+  display_name: 市场宏观工具（向后兼容）
+  description: >
+    【向后兼容】原市场宏观工具，现实际调用 macro_tool。
+    请新代码直接使用 macro_tool。
+  notes: >
+    向后兼容别名，实际调用 macro_tool。
+
+# ============================================================
+# 已删除工具
+# ============================================================
+# macro_global_tool: 已删除（纯占位符，需外部API获取油价/美债/VIX等数据）
