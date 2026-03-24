@@ -91,13 +91,13 @@ async def fetch_macro_data(stock_code: Optional[str] = None) -> tuple[dict, set[
         logger.warning(f"[Macro] 汇率数据获取失败: {e}")
         raw["fx_data"] = None
 
-    # 4. 全球宏观（油价、美联储等）
+    # 4. 全球宏观（油价、美联储等）- 仅记录数据，macro_global_tool 已删除
     try:
         global_macro = await _fetch_global_macro()
         if global_macro:
             raw["global_macro"] = global_macro
-            available.add("macro_global_tool")
-            logger.info("[Macro] 全球宏观数据获取成功")
+            # macro_global_tool 已删除，不加入 available（纯占位符，需外部API）
+            logger.info("[Macro] 全球宏观数据获取成功（仅记录，工具已删除）")
     except Exception as e:
         logger.warning(f"[Macro] 全球宏观数据获取失败: {e}")
         raw["global_macro"] = None
