@@ -1,5 +1,5 @@
 """
-市场微观结构工具模块（重构版）。
+市场微观结构工具模块。
 
 提供统一的市场微观结构分析工具，整合资金流向、融资融券和龙虎榜数据。
 原 capital_flow_tool + margin_tool + dragon_tiger_tool → microstructure_tool

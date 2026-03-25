@@ -106,8 +106,8 @@ async def run_pipeline(
     from src.data.akshare_adapter import merge_with_tushare
     from src.data.cleaner import clean
     from src.data.calculator import calculate
-    from src.data.market_rules import get_market_rules
-    from src.tools.skills_loader import scan_skills
+    from src.agents.config_loader import get_market_rules
+    from src.agents.skills_loader import scan_skills
     from src.pipeline.stage1 import run_stage1
     from src.pipeline.stage2 import run_stage2
     from src.pipeline.stage3 import run_stage3, SuspendedResult

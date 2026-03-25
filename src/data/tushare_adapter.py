@@ -73,7 +73,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
                     df[f"{col}_adj"] = df[col]
 
             raw["price_series"] = df
-            available.update(["price_tool", "indicator_tool"])
+            available.add("market_data_tool")
         else:
             raw["price_series"] = None
     except Exception as e:
@@ -88,7 +88,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
             df_basic = df_basic.rename(columns={"pb": "pb_mrq", "dv_ttm": "dividend_yield"})
             df_basic = df_basic.sort_values("trade_date").reset_index(drop=True)
             raw["daily_basic"] = df_basic
-            available.update(["fundamental_tool", "snapshot_tool"])
+            available.add("fundamental_tool")
         else:
             raw["daily_basic"] = None
     except Exception as e:
@@ -124,7 +124,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
                         df_flow["main_ratio"] = None
 
                 raw["capital_flow_raw"] = df_flow
-                available.update(["capital_flow_tool"])
+                available.add("microstructure_tool")
             else:
                 raw["capital_flow_raw"] = None
         except Exception as e:
@@ -172,7 +172,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
             if "margin_balance" in df_margin.columns:
                 df_margin["margin_change_5d"] = df_margin["margin_balance"].pct_change(5) * 100
             raw["margin_raw"] = df_margin
-            available.update(["margin_tool"])
+            available.add("microstructure_tool")
         else:
             raw["margin_raw"] = None
     except Exception as e:
@@ -184,7 +184,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
         df_dt = pro.top_list(trade_date=end_date, ts_code=stock_code)
         if df_dt is not None and not df_dt.empty:
             raw["dragon_tiger_raw"] = df_dt.head(30).to_dict("records")
-            available.update(["dragon_tiger_tool"])
+            available.add("microstructure_tool")
         else:
             raw["dragon_tiger_raw"] = None
     except Exception as e:
@@ -386,7 +386,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
 
         if _shareholder:
             raw["shareholder_raw"] = _shareholder
-            available.update(["shareholder_tool"])
+            available.add("fundamental_tool")
         else:
             raw["shareholder_raw"] = None
     else:

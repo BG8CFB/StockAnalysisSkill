@@ -1,5 +1,5 @@
 """
-宏观数据工具模块（重构版）。
+宏观数据工具模块。
 
 提供统一的宏观经济分析工具，整合中国宏观、利率、汇率和市场宏观数据。
 原 macro_china_tool + macro_interest_tool + macro_fx_tool + macro_market_tool → macro_tool
@@ -7,8 +7,6 @@
 """
 
 from __future__ import annotations
-
-from typing import Optional
 
 from src.data.calculator import CalculatedDataPacket
 from src.tools.base import _na, _fmt_float
@@ -65,7 +63,10 @@ def macro_tool(packet: CalculatedDataPacket) -> str:
             sections.append("### PMI（采购经理指数）")
             sections.append(f"- **最新值**：{_fmt_float(pmi.get('latest'), '{:.2f}')}")
             pmi_val = pmi.get("latest", 50)
-            status = "扩张" if pmi_val > 50 else "收缩"
+            try:
+                status = "扩张" if float(pmi_val) > 50 else "收缩"
+            except (TypeError, ValueError):
+                status = "N/A"
             sections.append(f"- **经济状态**：{status}（荣枯线=50）")
             sections.append("- **解读**：PMI>50表示经济扩张，<50表示收缩\n")
 

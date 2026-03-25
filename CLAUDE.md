@@ -37,15 +37,21 @@ This is a **multi-agent stock analysis pipeline** served as a FastAPI HTTP servi
 - `calculator.py`: Computes all technical/fundamental indicators (MACD, RSI, KDJ, Bollinger, MA, VaR etc.), returning a `CalculatedDataPacket`.
 
 **Layer 2 — Tools** (`src/tools/`):
-- `data_tools.py`: 11 formatting functions (`price_tool`, `indicator_tool`, `fundamental_tool`, `capital_flow_tool`, `margin_tool`, `dragon_tiger_tool`, `sentiment_tool`, `sector_tool`, `news_tool`, `snapshot_tool`, `risk_metric_tool`). Each takes a `CalculatedDataPacket` and returns formatted Markdown for injection into LLM context.
+- `data_tools.py`: Unified export module for all formatting tools (re-exports from submodules).
+- Submodules (`market.py`, `fundamental.py`, `microstructure.py`, `sentiment.py`, `macro.py`): Formatting functions that take a `CalculatedDataPacket` and return Markdown. Tools are organized by data domain:
+  - `market_data_tool`: Integrated tool (price + indicators + snapshot)
+  - `fundamental_tool`: Financial data + shareholder structure
+  - `microstructure_tool`: Capital flow + margin + dragon tiger
+  - `macro_tool`: Macro economic data
+  - `sentiment_tool`, `sector_tool`, `news_tool`, `risk_metric_tool`: Standalone tools
 - `tool_injector.py`: For a given agent, intersects `AGENT_CONFIGS[agent]["tools"]` with `available_tools` to build the agent's full data context string. Missing tools get a standard N/A placeholder.
 - `risk_calculator.py`: Pure-code VaR calculation and A-share-specific risk scoring (涨跌停/T+1/融资/停牌). Runs before Stage 3 AI agents.
-- `skills_loader.py`: Loads `*.md` files from `skills/` directory as domain knowledge snippets injected into all agents' user messages.
+- `skills_loader.py`: Loads skills from `skills/` directory following Agent Skills standard (agentskills.io). Supports progressive disclosure — AI only sees skill name/description, full content loaded on-demand.
 
 **Layer 3 — Agents** (`src/agents/`):
-- `registry.py`: `AGENT_CONFIGS` dict mapping 15 agent names to their `prompt_file` and required `tools`.
-- `base_agent.py`: `BaseAgent` — loads prompt from `docs/prompts/`, assembles system prompt (`global_rules.md` + role prompt + market rules) and user message (skills list + data context), calls LLM.
-- `llm_client.py`: OpenAI-compatible async client with semaphore-based concurrency control.
+- `config_loader.py`: Loads agent configurations from `config/agents/*.yaml`. Each agent has `prompt` (embedded in YAML), `tools`, `use_skills` fields.
+- `base_agent.py`: `BaseAgent` — assembles system prompt (`global_rules` from `config/global.yaml` + role prompt from YAML + market rules from `config/market_rules.yaml`) and user message (skills list + data context), calls LLM.
+- `llm_client.py`: OpenAI-compatible async client with semaphore-based concurrency control. Supports function calling for skills.
 
 ### Pipeline Stages (`src/pipeline/`)
 
@@ -77,13 +83,28 @@ All config via environment variables / `.env`. Key settings:
 - `DEBATE_ROUNDS`: number of bull/bear debate rounds in Stage 2 (0–3)
 - `ANALYSIS_CAPITAL_BASE`: base position size for VaR calculation (doesn't affect actual trading advice)
 
-### Prompt Files (`docs/prompts/`)
+### Agent Configuration (`config/`)
 
-All agent system prompts are Markdown files loaded at runtime (cached in memory). `global_rules.md` is prepended to every agent's system prompt. Market rules (`docs/market_rules/`) are injected dynamically based on the stock's market (A/HK/US).
+All agent configurations are YAML files:
+- `config/agents/stage1.yaml`: Stage 1 analysts (list format, user can add/remove)
+- `config/agents/stage2.yaml`, `stage3.yaml`, `stage4.yaml`: Fixed agents for later stages
+- `config/global.yaml`: Global rules prepended to every agent's system prompt
+- `config/market_rules.yaml`: Market-specific rules (A/HK/US) injected dynamically based on stock code suffix
+
+Each agent config contains: `agent_id`, `display_name`, `prompt` (embedded in YAML), `tools`, `use_skills`.
 
 ### Skills Extension (`skills/`)
 
-Drop `.md` files in `skills/` to add domain knowledge available to all agents. Files are loaded at service start and injected as a list into every LLM call's user message header. No code changes needed — restart service to pick up new files.
+Skills follow the Agent Skills open standard (agentskills.io/specification). Each skill is a directory containing:
+- `SKILL.md`: Required. YAML frontmatter (name + description) + instruction content
+- `references/`, `scripts/`, `assets/`: Optional supporting files
+
+Skills use progressive disclosure:
+1. Service start: Scan `skills/*/SKILL.md` to extract name + description (~100 tokens/skill)
+2. LLM call: Skills are presented as function calling tools (AI only sees name/description)
+3. Skill activation: When AI calls a skill, full `SKILL.md` content is loaded (<5000 tokens)
+
+No code changes needed to add skills — just drop a directory in `skills/` and restart.
 
 ### Suspension Handling
 

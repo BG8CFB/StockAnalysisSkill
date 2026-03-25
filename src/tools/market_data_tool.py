@@ -1,5 +1,5 @@
 """
-市场数据工具模块（重构版）。
+市场数据工具模块。
 
 提供统一的市场数据工具，整合价格序列、技术指标和行情快照。
 原 price_tool + indicator_tool + snapshot_tool → market_data_tool

@@ -99,7 +99,7 @@ class BaseAgent:
         tools = None
         tool_executor = None
         if self._use_skills:
-            from src.tools.skills_loader import get_skill_tool_definitions, execute_skill_call
+            from src.agents.skills_loader import get_skill_tool_definitions, execute_skill_call
             skill_defs = get_skill_tool_definitions()
             if skill_defs:
                 tools = skill_defs

@@ -130,7 +130,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
                 if "close" in df.columns and "pct_chg" not in df.columns:
                     df["pct_chg"] = df["close"].pct_change() * 100
                 raw["price_series"] = df
-                available.update(["price_tool", "indicator_tool"])
+                available.add("market_data_tool")
             else:
                 raw["price_series"] = None
         elif is_hk:
@@ -152,7 +152,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
                     df["pct_chg"] = df["close"].pct_change() * 100
                 df = df.sort_values("trade_date").reset_index(drop=True)
                 raw["price_series"] = df
-                available.update(["price_tool", "indicator_tool"])
+                available.add("market_data_tool")
             else:
                 raw["price_series"] = None
         else:
@@ -175,7 +175,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
                     df["pct_chg"] = df["close"].pct_change() * 100
                 df = df.sort_values("trade_date").reset_index(drop=True)
                 raw["price_series"] = df
-                available.update(["price_tool", "indicator_tool"])
+                available.add("market_data_tool")
             else:
                 raw["price_series"] = None
     except Exception as e:
@@ -218,7 +218,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
                         )
                 df_basic = df_basic.sort_values("trade_date").reset_index(drop=True)
                 raw["daily_basic"] = df_basic
-                available.update(["fundamental_tool", "snapshot_tool"])
+                available.add("fundamental_tool")
             else:
                 raw["daily_basic"] = None
         except Exception as e:
@@ -265,7 +265,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
                     df_flow["main_net_5d"] = df_flow["main_net_today"].rolling(5).sum()
                     df_flow["main_net_10d"] = df_flow["main_net_today"].rolling(10).sum()
                 raw["capital_flow_raw"] = df_flow
-                available.update(["capital_flow_tool"])
+                available.add("microstructure_tool")
             else:
                 raw["capital_flow_raw"] = None
         except Exception as e:
@@ -337,7 +337,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
                         df_margin["short_balance"], errors="coerce"
                     )
                 raw["margin_raw"] = df_margin
-                available.update(["margin_tool"])
+                available.add("microstructure_tool")
             else:
                 raw["margin_raw"] = None
         except Exception as e:
@@ -377,7 +377,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
                     records = df_lhb.head(30).to_dict("records")
                     if records:
                         raw["dragon_tiger_raw"] = records
-                        available.update(["dragon_tiger_tool"])
+                        available.add("microstructure_tool")
                     else:
                         raw["dragon_tiger_raw"] = None
                 else:
@@ -417,7 +417,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
                 )
                 raw["news_raw"] = news_records
                 if news_records:
-                    available.update(["news_tool"])
+                    available.add("news_tool")
             else:
                 raw["news_raw"] = []
         except Exception as e:
@@ -440,7 +440,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
                     if val and str(val).strip() and str(val).strip() != "nan":
                         concepts.append(str(val).strip())
             raw["sector_raw"] = {"concepts": concepts}
-            available.update(["sector_tool"])
+            available.add("sector_tool")
         except Exception as e:
             logger.warning(f"[AkShare] 板块概念数据拉取失败 {stock_code}: {e}")
             raw["sector_raw"] = {"concepts": []}
@@ -481,7 +481,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
                 raw["market_sentiment_raw"] = pd.DataFrame(
                     sorted(sentiment_rows, key=lambda x: x["trade_date"])
                 )
-                available.update(["sentiment_tool"])
+                available.add("sentiment_tool")
             else:
                 raw["market_sentiment_raw"] = None
         except Exception as e:
@@ -655,7 +655,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
                     if raw.get("financial_raw") is None:
                         raw["financial_raw"] = {}
                     raw["financial_raw"]["fina_indicator"] = fi_records
-                    available.update(["fundamental_tool"])
+                    available.add("fundamental_tool")
         except Exception as e:
             logger.warning(f"[AkShare] 财务核心指标(em)拉取失败 {stock_code}: {e}")
 
@@ -775,7 +775,7 @@ async def fetch_all(stock_code: str, start_date: Optional[str] = None,
 
         if _shareholder:
             raw["shareholder_raw"] = _shareholder
-            available.update(["shareholder_tool"])
+            available.add("fundamental_tool")
         else:
             raw["shareholder_raw"] = None
     else:
@@ -839,17 +839,17 @@ async def merge_with_tushare(tushare_raw: dict, tushare_available: set[str],
 
     # 工具分区映射：raw_data 键 → 对应的 available_tool 名称列表
     SECTION_TOOLS: list[tuple[str, list[str]]] = [
-        ("price_series",          ["price_tool", "indicator_tool"]),
-        ("daily_basic",           ["fundamental_tool", "snapshot_tool"]),
-        ("capital_flow_raw",      ["capital_flow_tool"]),
-        ("margin_raw",            ["margin_tool"]),
-        ("dragon_tiger_raw",      ["dragon_tiger_tool"]),
+        ("price_series",          ["market_data_tool"]),
+        ("daily_basic",           ["fundamental_tool"]),
+        ("capital_flow_raw",      ["microstructure_tool"]),
+        ("margin_raw",            ["microstructure_tool"]),
+        ("dragon_tiger_raw",      ["microstructure_tool"]),
         ("news_raw",              ["news_tool"]),
         ("sector_raw",            ["sector_tool"]),
         ("market_sentiment_raw",  ["sentiment_tool"]),
         ("financial_raw",         ["fundamental_tool"]),
         ("dividend_raw",          []),   # 分红归属 fundamental_tool，不单独列工具
-        ("shareholder_raw",       ["shareholder_tool"]),
+        ("shareholder_raw",       ["fundamental_tool"]),
     ]
 
     # ── 1. 检测哪些分区需要 AkShare 补充 ───────────────────────────────────

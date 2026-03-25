@@ -59,11 +59,12 @@ def sentiment_tool(packet: CalculatedDataPacket) -> str:
             )
 
     # RSI 情绪参考
-    rsi_val = packet.rsi.get("rsi_14")
-    if rsi_val is not None:
-        lines.append(
-            f"**个股RSI14**：{float(rsi_val):.1f}（信号：{packet.rsi.get('rsi_signal', 'N/A')}）"
-        )
+    if packet.rsi:
+        rsi_val = packet.rsi.get("rsi_14")
+        if rsi_val is not None:
+            lines.append(
+                f"**个股RSI14**：{float(rsi_val):.1f}（信号：{packet.rsi.get('rsi_signal', 'N/A')}）"
+            )
 
     return "\n".join(lines)
 
